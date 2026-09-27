@@ -80,11 +80,20 @@ bun run build
 
 D1 名字保持 `imgflare-db`，位置 `Automatic`，不要勾读取复制。
 
-`[secrets].required` 里的项由你在这一页填值，仓库里不写：
+创建页只填这些。仓库里不写值。
 
-`ADMIN_USERNAME`、`ADMIN_PASSWORD`、`SESSION_SECRET`、`TURNSTILE_SITE_KEY`、`TURNSTILE_SECRET`、`ORIGIN`、`R2_ACCOUNT_ID`、`R2_ACCESS_KEY_ID`、`R2_SECRET_ACCESS_KEY`、`R2_BUCKET`。
+| 名称 | 变量 | 加密 |
+|---|---|---|
+| 管理员用户名 | `ADMIN_USERNAME` | 否 |
+| 管理员密码 | `ADMIN_PASSWORD` | 是 |
+| Turnstile Site Key | `TURNSTILE_SITE_KEY` | 否 |
+| Turnstile Secret Key | `TURNSTILE_SECRET` | 是 |
+| R2 Account ID | `R2_ACCOUNT_ID` | 否 |
+| R2 的 Access Key ID | `R2_ACCESS_KEY_ID` | 是 |
+| R2 的 Secret Access Key | `R2_SECRET_ACCESS_KEY` | 是 |
+| R2 桶名 | `R2_BUCKET` | 否 |
 
-`MAX_UPLOAD_SIZE` 和 `SESSION_TTL_SECONDS` 不是配置。代码里写死为 50 MB 和 7 天。
+上传上限 50 MB、登录有效期 7 天、会话密钥写在代码里，不用填。
 
 R2 桶要自己先建好。不要开公共访问。
 
@@ -94,11 +103,11 @@ R2 桶要自己先建好。不要开公共访问。
 
 Turnstile 在 **Turnstile → Add widget** 里创建。Domain 填 Worker 域名，Widget Mode 选 `Managed`。Site Key 和 Secret Key 填进上面那张表。
 
-之后打开 `ORIGIN/login`，用 `ADMIN_USERNAME` + `ADMIN_PASSWORD` 登录。部署命令带了 `--keep-vars`，下次部署不会清掉这一页填的值。
+之后打开 Worker 域名的 `/login`，用管理员用户名和密码登录。部署命令带了 `--keep-vars`，下次部署不会清掉这一页填的值。
 
 ### 绑定自定义域名（可选）
 
-Worker → **Settings** → **Domains & Routes** → **Add** → **Custom Domain**。改 `ORIGIN` 后重新部署，新的图片 URL 才会用新域名。
+Worker → **Settings** → **Domains & Routes** → **Add** → **Custom Domain**。图片地址用你打开面板时的那个域名，不用再改配置。
 
 ---
 
@@ -129,16 +138,17 @@ enabled = false
 ## 三、验收
 
 ```bash
-ORIGIN=https://你的域名
+# 换成 Cloudflare 给的 workers.dev，或你绑定的域名
+BASE=https://你的域名
 
 # 未登录打开首页应 302 到 /login
-curl -si $ORIGIN/ | head -n 20
+curl -si $BASE/ | head -n 20
 
 # 不存在的图片应 404，不要求登录
-curl -si $ORIGIN/i/0123456789ABCDEF0123456789ABCDEF.png | head -n 20
+curl -si $BASE/i/0123456789ABCDEF0123456789ABCDEF.png | head -n 20
 ```
 
-浏览器打开 `$ORIGIN/login`，用 `ADMIN_USERNAME` + `ADMIN_PASSWORD` 登录，上传一张图，复制 Markdown 贴到别处确认能显示。
+浏览器打开 `$BASE/login`，用 `ADMIN_USERNAME` + `ADMIN_PASSWORD` 登录，上传一张图，复制 Markdown 贴到别处确认能显示。
 
 完整清单见 [`test/manual-test.md`](test/manual-test.md)。
 
@@ -183,7 +193,7 @@ curl -si $ORIGIN/i/0123456789ABCDEF0123456789ABCDEF.png | head -n 20
 ```bash
 SHA=$(sha256sum photo.png | cut -d' ' -f1)
 
-curl -X POST $ORIGIN/api/upload \
+curl -X POST $BASE/api/upload \
   -H 'X-API-Key: cph_xxx' \
   -H "X-File-SHA256: $SHA" \
   -F "file=@photo.png"
@@ -239,7 +249,7 @@ API Token 不能删除图片。
 
 安装后点脚本菜单 → **设置**，填：
 
-- **API 地址**：你的 `ORIGIN`
+- **API 地址**：Worker 域名，或你绑定的域名
 - **Token**：在后台「API Token」页生成
 
 功能：`Ctrl+V` 粘贴上传、拖拽上传、批量上传（最多 3 并发）、失败重试 2 次、自动插入 Markdown。
@@ -328,7 +338,7 @@ bun run clean            # 清 dist / build / target
 
 **部署后所有接口 500**
 
-`ORIGIN`、登录账号、Turnstile 或 R2 那几项没配齐。创建页上的值要填完整。
+登录账号、Turnstile 或 R2 没填全。创建页上的值要填完整。
 
 **登录页没有人机验证**
 
@@ -337,10 +347,6 @@ bun run clean            # 清 dist / build / target
 **改了变量不生效**
 
 重新部署一次。Deploy command 里的 `--keep-vars` 会保留网页上的变量。
-
-**图片链接指向旧域名**
-
-`ORIGIN` 没更新。改完重新部署。
 
 **非图片上传失败**
 

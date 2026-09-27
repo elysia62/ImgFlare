@@ -1,8 +1,8 @@
 //! Configuration read from the Worker environment.
 //!
 //! Defaults that are the same for every install are in code.
-//! Anything specific to one account — origin, Turnstile, admin login, and the
-//! R2 access key — is typed on Cloudflare's create-project page and is not in git.
+//! Account values — Turnstile, admin login, and the R2 access key — are typed
+//! on Cloudflare's create-project page and are not in git.
 
 use crate::error::{ApiError, ApiResult};
 use worker::Env;
@@ -12,6 +12,10 @@ pub const MAX_UPLOAD_SIZE: usize = 52_428_800;
 
 /// Session cookie lifetime. 7 days. Not a Cloudflare variable.
 pub const SESSION_TTL_SECONDS: i64 = 604_800;
+
+/// Session cookie HMAC key. Not a Cloudflare variable.
+pub const SESSION_SECRET: &str =
+    "imgflare-session-7f3c9a1e6b2d48c0a5e7f91b3d6c8a0e4f2b7d9c1a6e8b0d";
 #[derive(Clone)]
 pub struct R2Settings {
     pub account_id: String,
@@ -23,17 +27,12 @@ pub struct R2Settings {
 /// Everything the handlers need, resolved once per request.
 #[derive(Clone)]
 pub struct Config {
-    /// Origin this Worker is served from, e.g. `https://imgflare.example.com`.
-    /// Public image URLs are built from it.
-    pub origin: String,
     pub turnstile_site_key: String,
     pub r2: R2Settings,
 }
 
 impl Config {
     pub fn from_env(env: &Env) -> ApiResult<Self> {
-        let origin = required(env, "ORIGIN")?.trim_end_matches('/').to_string();
-
         let turnstile_site_key = required(env, "TURNSTILE_SITE_KEY")?;
         if turnstile_site_key.starts_with("YOUR_") {
             return Err(ApiError::Internal(
@@ -50,16 +49,15 @@ impl Config {
         };
 
         Ok(Self {
-            origin,
             turnstile_site_key,
             r2,
         })
     }
+}
 
-    /// Public URL for a stored image. `r2_key` is `i/<id>.<ext>`.
-    pub fn public_url(&self, r2_key: &str) -> String {
-        format!("{}/{}", self.origin, r2_key)
-    }
+/// Public URL for a stored image. `origin` is the address the request came in on.
+pub fn public_url(origin: &str, r2_key: &str) -> String {
+    format!("{}/{}", origin.trim_end_matches('/'), r2_key)
 }
 
 /// Read a required string. Dashboard variables and secrets are both strings.

@@ -6,17 +6,10 @@
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=dev-password
 
-# HMAC key for session cookies. Generate a real one with:
-#   openssl rand -base64 48
-SESSION_SECRET=dev-only-session-secret-please-change-me
-
 # Turnstile test keys — always pass, safe for local development.
 # https://developers.cloudflare.com/turnstile/troubleshooting/testing/
 TURNSTILE_SITE_KEY=1x00000000000000000000AA
 TURNSTILE_SECRET=1x0000000000000000000000000000000AA
-
-# Origin the dev server answers on.
-ORIGIN=http://localhost:8787
 
 # R2 S3 API token. One bucket holds images under i/ and the backup under back/.
 # A value that is empty or starts with YOUR_ is treated as unset.

@@ -1,6 +1,5 @@
 //! File listing, lookup and deletion.
 
-use crate::config::Config;
 use crate::db::Db;
 use crate::error::{ApiError, ApiResult};
 use crate::r2::R2;
@@ -35,7 +34,7 @@ pub struct ListResponse {
 /// Paginated listing, newest first.
 ///
 /// `page`/`limit` and `offset`/`limit` are both accepted; page is 1-based.
-pub async fn handle_list(db: &Db, cfg: &Config, query: ListQuery) -> ApiResult<ListResponse> {
+pub async fn handle_list(db: &Db, origin: &str, query: ListQuery) -> ApiResult<ListResponse> {
     let limit = query.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
     let offset = match (query.page, query.offset) {
         (_, Some(o)) => o,
@@ -50,7 +49,7 @@ pub async fn handle_list(db: &Db, cfg: &Config, query: ListQuery) -> ApiResult<L
     Ok(ListResponse {
         files: rows
             .iter()
-            .map(|r| FileInfo::from_record(r, cfg))
+            .map(|r| FileInfo::from_record(r, origin))
             .collect(),
         total,
         limit,
@@ -59,12 +58,12 @@ pub async fn handle_list(db: &Db, cfg: &Config, query: ListQuery) -> ApiResult<L
 }
 
 /// `GET /api/files/:id`
-pub async fn handle_get(db: &Db, cfg: &Config, id: &str) -> ApiResult<FileInfo> {
+pub async fn handle_get(db: &Db, origin: &str, id: &str) -> ApiResult<FileInfo> {
     let record = db
         .find_file_by_id(id)
         .await?
         .ok_or(ApiError::NotFound("file_not_found"))?;
-    Ok(FileInfo::from_record(&record, cfg))
+    Ok(FileInfo::from_record(&record, origin))
 }
 
 /// `DELETE /api/files/:id`

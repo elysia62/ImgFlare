@@ -37,8 +37,8 @@ pub struct FileInfo {
 
 impl FileInfo {
     /// Build the client-facing view of a row, including URL and Markdown.
-    pub fn from_record(record: &FileRecord, cfg: &Config) -> Self {
-        let url = cfg.public_url(&record.r2_key);
+    pub fn from_record(record: &FileRecord, origin: &str) -> Self {
+        let url = crate::config::public_url(origin, &record.r2_key);
         Self {
             id: record.id.clone(),
             sha256: record.sha256.clone(),
@@ -92,7 +92,7 @@ pub struct CheckResponse {
 /// would be an oracle for probing arbitrary content.
 pub async fn handle_check(
     db: &Db,
-    cfg: &Config,
+    origin: &str,
     body: CheckRequest,
 ) -> ApiResult<CheckResponse> {
     let sha256 =
@@ -102,7 +102,7 @@ pub async fn handle_check(
         Some(record) => Ok(CheckResponse {
             success: true,
             exists: true,
-            file: Some(FileInfo::from_record(&record, cfg)),
+            file: Some(FileInfo::from_record(&record, origin)),
         }),
         None => Ok(CheckResponse {
             success: true,
@@ -130,6 +130,7 @@ pub async fn handle_upload(
     req: &mut worker::Request,
     db: &Db,
     cfg: &Config,
+    origin: &str,
     declared_sha256: Option<String>,
 ) -> ApiResult<UploadOutcome> {
     let declared = declared_sha256
@@ -183,7 +184,7 @@ pub async fn handle_upload(
     // Fast path: someone already stored these exact bytes.
     if let Some(existing) = db.find_file_by_sha256(&declared).await? {
         return Ok(UploadOutcome {
-            file: FileInfo::from_record(&existing, cfg),
+            file: FileInfo::from_record(&existing, origin),
             deduplicated: true,
         });
     }
@@ -222,7 +223,7 @@ pub async fn handle_upload(
 
     match db.insert_file(&record).await {
         Ok(()) => Ok(UploadOutcome {
-            file: FileInfo::from_record(&record, cfg),
+            file: FileInfo::from_record(&record, origin),
             deduplicated: false,
         }),
 
@@ -232,7 +233,7 @@ pub async fn handle_upload(
             let _ = r2.delete(&bucket, &record.r2_key).await;
             match db.find_file_by_sha256(&declared).await? {
             Some(existing) => Ok(UploadOutcome {
-                file: FileInfo::from_record(&existing, cfg),
+                file: FileInfo::from_record(&existing, origin),
                 deduplicated: true,
             }),
             // The insert failed for some reason *other* than a duplicate, and

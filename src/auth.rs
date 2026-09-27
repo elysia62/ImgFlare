@@ -69,8 +69,8 @@ struct SessionPayload {
 }
 
 /// Issue a fresh session cookie value.
-pub fn create_session(env: &Env) -> ApiResult<String> {
-    let secret = secret(env, "SESSION_SECRET")?;
+pub fn create_session() -> ApiResult<String> {
+    let secret = crate::config::SESSION_SECRET;
     let now = now_ms();
 
     let payload = SessionPayload {
@@ -92,8 +92,8 @@ pub fn create_session(env: &Env) -> ApiResult<String> {
 
 /// Verify a cookie value. Returns `Ok(())` when the signature is valid and the
 /// session has not expired.
-pub fn verify_session(env: &Env, cookie_value: &str) -> ApiResult<()> {
-    let secret = secret(env, "SESSION_SECRET")?;
+pub fn verify_session(cookie_value: &str) -> ApiResult<()> {
+    let secret = crate::config::SESSION_SECRET;
 
     let (payload_b64, sig_b64) = cookie_value
         .split_once('.')
@@ -144,9 +144,9 @@ fn session_cookie_from_request(req: &Request) -> Option<String> {
 }
 
 /// Does this request carry a valid session cookie?
-pub fn has_valid_session(env: &Env, req: &Request) -> bool {
+pub fn has_valid_session(req: &Request) -> bool {
     match session_cookie_from_request(req) {
-        Some(v) => verify_session(env, &v).is_ok(),
+        Some(v) => verify_session(&v).is_ok(),
         None => false,
     }
 }
@@ -159,12 +159,8 @@ pub fn has_valid_session(env: &Env, req: &Request) -> bool {
 ///
 /// A valid session cookie wins. Otherwise an `X-API-Key` header is checked
 /// against the hashed token table.
-pub async fn authenticate(
-    env: &Env,
-    req: &Request,
-    db: &Db,
-) -> ApiResult<Principal> {
-    if has_valid_session(env, req) {
+pub async fn authenticate(req: &Request, db: &Db) -> ApiResult<Principal> {
+    if has_valid_session(req) {
         return Ok(Principal::Admin);
     }
 
@@ -182,8 +178,8 @@ pub async fn authenticate(
 }
 
 /// Authenticate for admin-only operations.
-pub async fn require_admin(env: &Env, req: &Request, db: &Db) -> ApiResult<Principal> {
-    let principal = authenticate(env, req, db).await?;
+pub async fn require_admin(req: &Request, db: &Db) -> ApiResult<Principal> {
+    let principal = authenticate(req, db).await?;
     if !principal.is_admin() {
         return Err(ApiError::Forbidden("admin_only"));
     }
@@ -333,7 +329,7 @@ pub fn check_origin(req: &Request, _cfg: &Config) -> ApiResult<()> {
 }
 
 /// Rebuild `scheme://host[:port]` from the request URL, lowercased.
-fn request_origin(req: &Request) -> Option<String> {
+pub(crate) fn request_origin(req: &Request) -> Option<String> {
     let url = req.url().ok()?;
     let host = url.host_str()?;
 
