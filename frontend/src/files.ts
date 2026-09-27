@@ -9,13 +9,11 @@ import { ApiError, deleteFile, listFiles } from './api.js';
 import type { FileInfo } from './types.js';
 import { humanizeError } from './types.js';
 import {
-  copyRow,
   copyWithFeedback,
   el,
   formatBytes,
   formatTime,
   replace,
-  shortHash,
   toast,
 } from './ui.js';
 import { copyText } from './clipboard.js';
@@ -153,41 +151,40 @@ export class FileBrowser {
   }
 
   private renderCard(file: FileInfo): HTMLElement {
+    const media = el('a', {
+      class: 'shot-media',
+      href: file.url,
+      target: '_blank',
+      rel: 'noopener noreferrer',
+    });
     const preview = el('img', {
-      class: 'file-thumb',
+      class: 'shot-img',
       src: file.url,
       alt: file.name,
       loading: 'lazy',
     });
+    preview.addEventListener('error', () => {
+      media.classList.add('is-broken');
+      media.dataset.label = file.contentType.replace(/^image\//, '');
+      preview.remove();
+    });
+    media.append(preview);
 
-    const meta = el('div', { class: 'file-meta' }, [
-      el('div', { class: 'file-name', title: file.name, text: file.name }),
-      el('div', { class: 'file-sub' }, [
-        el('span', { class: 'tag', text: file.contentType }),
-        el('span', { text: formatBytes(file.size) }),
-        el('span', { text: formatTime(file.createdAt) }),
-        el('span', { class: 'mono dim', text: shortHash(file.sha256) }),
-      ]),
-    ]);
-
-    const actions = el('div', { class: 'file-actions' }, [
-      button('复制 URL', () =>
-        copyWithFeedback(file.url, 'URL', copyText),
-      ),
-      button('复制 Markdown', () =>
-        copyWithFeedback(file.markdown, 'Markdown', copyText),
-      ),
-      link('打开', file.url),
+    const actions = el('div', { class: 'shot-actions' }, [
+      button('链接', () => copyWithFeedback(file.url, 'URL', copyText)),
+      button('Markdown', () => copyWithFeedback(file.markdown, 'Markdown', copyText)),
       button('删除', () => void this.confirmDelete(file), 'btn-danger'),
     ]);
 
-    const copyRowNode = copyRow(file.url, (value) => {
-      void copyWithFeedback(value, 'URL', copyText);
-    }, { mono: true });
-
-    return el('article', { class: 'file-card' }, [
-      el('div', { class: 'file-head' }, [preview, meta]),
-      copyRowNode,
+    return el('article', { class: 'shot' }, [
+      media,
+      el('div', { class: 'shot-caption' }, [
+        el('div', { class: 'shot-name', title: file.name, text: file.name }),
+        el('div', {
+          class: 'shot-sub',
+          text: `${formatBytes(file.size)} · ${formatTime(file.createdAt)}`,
+        }),
+      ]),
       actions,
     ]);
   }
@@ -222,14 +219,4 @@ function button(
   });
   node.addEventListener('click', onClick);
   return node;
-}
-
-function link(label: string, href: string): HTMLAnchorElement {
-  return el('a', {
-    class: 'btn btn-ghost btn-sm',
-    href,
-    target: '_blank',
-    rel: 'noopener noreferrer',
-    text: label,
-  });
 }

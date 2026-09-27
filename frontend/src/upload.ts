@@ -12,7 +12,7 @@ import { ApiError, checkDuplicate, uploadFile } from './api.js';
 import { sha256Hex } from './hash.js';
 import type { UploadResult, UploadTask } from './types.js';
 
-const IMAGE_NAME = /\.(png|jpe?g|webp|gif|avif|bmp|ico)$/i;
+const IMAGE_NAME = /\.(png|jpe?g|webp|gif|avif|bmp|ico|svg|jxl|heic|heif|tiff?)$/i;
 
 export function isSupportedImage(file: File): boolean {
   return IMAGE_NAME.test(file.name);
@@ -81,7 +81,7 @@ export class UploadQueue {
           file,
           state: 'failed',
           progress: 0,
-          error: '只支持图片（png、jpg、webp、gif、avif、bmp、ico）',
+          error: '只支持图片（png、jpg、webp、gif、avif、svg、jxl、heic、tiff 等）',
           attempts: 0,
         });
         this.order.push(key);

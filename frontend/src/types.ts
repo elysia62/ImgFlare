@@ -136,7 +136,7 @@ export function humanizeError(code: string): string {
     empty_filename: '文件名为空',
     size_mismatch: '文件大小校验失败',
     file_too_large: '文件超过大小限制',
-    unsupported_file_type: '只支持图片（png、jpg、webp、gif、avif、bmp、ico）',
+    unsupported_file_type: '只支持图片（png、jpg、webp、gif、avif、svg、jxl、heic、tiff 等）',
     checksum_mismatch: '文件内容和校验值不一致',
     expected_multipart: '上传格式不正确',
     file_not_found: '文件不存在',

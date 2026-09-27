@@ -193,87 +193,56 @@ for (const inv of INVARIANTS) {
 }
 
 // ---------------------------------------------------------------------------
-// Public-file serving rules
+// Public image responses
 //
-// The panel and the uploaded files share one origin, so a stored type that a
-// browser renders as a document would be a session-stealing XSS. These cases
-// pin the exact mapping, because a careless edit here is a silent hole.
+// Known image types are returned as themselves. Anything else is a 404 and
+// the body is not sent.
 // ---------------------------------------------------------------------------
-console.log("\n公开文件响应类型");
+console.log("\n公开图片响应");
 
 {
-  const src = await Bun.file(path.join(ROOT, "src/public.rs")).text();
-
-  // Pull the `match` arms out of `plan_serving`: "type" => plain(...) / sandboxed(...)
-  const arms = new Map();
-  // Matches both `"a" => plain("x")` and the braced, multi-pattern form
-  // `"a" | "b" => { sandboxed("x") }`.
-  const re =
-    /^\s*((?:"[^"]+"\s*\|?\s*)+)=>\s*\{?\s*(plain|sandboxed)\(\s*"([^"]*)"/gm;
-  for (const m of src.matchAll(re)) {
-    const keys = m[1].match(/"([^"]+)"/g) ?? [];
-    for (const k of keys) {
-      arms.set(k.slice(1, -1), { kind: m[2], out: m[3] });
-    }
-  }
-
-  const cases = [
-    ["image/png", "image/png", false],
-    ["image/jpeg", "image/jpeg", false],
-    ["image/webp", "image/webp", false],
-    ["image/gif", "image/gif", false],
-    ["image/avif", "image/avif", false],
-    ["image/bmp", "image/bmp", false],
-    ["image/x-icon", "image/x-icon", false],
+  const utils = await Bun.file(path.join(ROOT, "src/utils.rs")).text();
+  const pub = await Bun.file(path.join(ROOT, "src/public.rs")).text();
+  const types = [
+    "image/png",
+    "image/jpeg",
+    "image/webp",
+    "image/gif",
+    "image/avif",
+    "image/bmp",
+    "image/x-icon",
+    "image/svg+xml",
+    "image/jxl",
+    "image/heic",
+    "image/heif",
+    "image/tiff",
   ];
 
   let bad = 0;
-  for (const [stored, wantType, wantSandbox] of cases) {
-    const arm = arms.get(stored);
-    if (!arm) {
-      console.log(`  ✗ ${stored}：没有对应的处理分支（会落到默认 case）`);
+  for (const type of types) {
+    if (!utils.includes(`"${type}"`)) {
+      console.log(`  ✗ utils.rs 没有 ${type}`);
       bad++;
-      continue;
-    }
-    if (arm.out !== wantType) {
-      console.log(`  ✗ ${stored}：声明为 ${arm.out}，应为 ${wantType}`);
-      bad++;
-      continue;
-    }
-    if (arm.kind === "sandboxed" !== wantSandbox) {
-      console.log(`  ✗ ${stored}：sandbox 应为 ${wantSandbox}`);
-      bad++;
-      continue;
-    }
-    console.log(`  ✓ ${stored} → ${wantType}${wantSandbox ? " + sandbox" : ""}`);
-  }
-
-  // Every branch must be sandboxed unless it is a known-inert type.
-  const inert = new Set([
-    "image/png", "image/jpeg", "image/webp", "image/gif", "image/avif",
-    "image/bmp", "image/x-icon",
-  ]);
-  for (const [stored, arm] of arms) {
-    if (!inert.has(stored) && arm.kind !== "sandboxed") {
-      console.log(`  ✗ ${stored} 不是已知惰性类型，却没有 sandbox`);
-      bad++;
+    } else {
+      console.log(`  ✓ ${type}`);
     }
   }
-
-  if (!src.includes('_ => sandboxed("application/octet-stream")')) {
-    console.log("  ✗ 未知类型没有降级为 application/octet-stream + sandbox");
+  if (!pub.includes('ApiError::NotFound("not_found")')) {
+    console.log("  ✗ 非图片没有返回 404");
     bad++;
   }
-
-  const utils = await Bun.file(path.join(ROOT, "src/utils.rs")).text();
-  for (const banned of ["application/pdf", "application/javascript", "text/html", "image/svg", "application/zip", ".user.js"]) {
+  if (pub.includes("application/octet-stream")) {
+    console.log("  ✗ 仍在把非图片按文件流返回");
+    bad++;
+  }
+  for (const banned of ["application/pdf", "application/javascript", "text/html", "application/zip", ".user.js"]) {
     if (utils.includes(banned)) {
       console.log(`  ✗ utils.rs 仍接受非图片：${banned}`);
       bad++;
     }
   }
   if (bad) violations++;
-  else console.log("  ✓ 图片类型按原样返回，其它类型都 sandbox");
+  else console.log("  ✓ 图片原样返回，其它类型 404");
 }
 
 console.log();

@@ -7,14 +7,13 @@
 use crate::error::{ApiError, ApiResult};
 use worker::Env;
 
-/// R2 S3 credentials and the two bucket names they may write to.
+/// R2 S3 credentials and the bucket images and backups share.
 #[derive(Clone)]
 pub struct R2Settings {
     pub account_id: String,
     pub access_key_id: String,
     pub secret_access_key: String,
     pub bucket: String,
-    pub backup_bucket: String,
 }
 
 /// Everything the handlers need, resolved once per request.
@@ -56,7 +55,6 @@ impl Config {
             access_key_id: required(env, "R2_ACCESS_KEY_ID")?,
             secret_access_key: required(env, "R2_SECRET_ACCESS_KEY")?,
             bucket: bucket_name(env, "R2_BUCKET")?,
-            backup_bucket: bucket_name(env, "R2_BACKUP_BUCKET")?,
         };
 
         Ok(Self {
@@ -68,9 +66,9 @@ impl Config {
         })
     }
 
-    /// Public URL for a stored image.
-    pub fn public_url(&self, sha256: &str) -> String {
-        format!("{}/i/{}", self.origin, sha256)
+    /// Public URL for a stored image. `r2_key` is `i/<id>.<ext>`.
+    pub fn public_url(&self, r2_key: &str) -> String {
+        format!("{}/{}", self.origin, r2_key)
     }
 }
 

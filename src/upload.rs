@@ -2,8 +2,9 @@
 //!
 //! The deduplication contract:
 //!
-//! * The R2 key is `i/<sha256>` — content addressed, so identical bytes always
-//!   map to the same key and therefore the same public URL.
+//! * The public name is a random id plus the real extension, for example
+//!   `i/4L4V3tZnrvk16TmODWWOyZWDTzov1YY4.png`. The same bytes still dedupe on
+//!   SHA-256 and keep the first name.
 //! * `/api/upload/check` is a fast path only. `/api/upload` re-checks the hash
 //!   itself, because two clients can race past the check simultaneously.
 //! * If the INSERT loses a race, the UNIQUE constraint on `sha256` fires and we
@@ -14,7 +15,8 @@ use crate::db::{Db, FileRecord};
 use crate::error::{ApiError, ApiResult};
 use crate::r2::{PutOptions, R2};
 use crate::utils::{
-    escape_markdown_text, image_content_type, normalize_sha256, now_ms, random_token, sha256_hex,
+    escape_markdown_text, extension_for_type, image_content_type, normalize_sha256, now_ms,
+    public_image_id, random_token, sha256_hex,
 };
 use serde::{Deserialize, Serialize};
 use worker::FormEntry;
@@ -36,7 +38,7 @@ pub struct FileInfo {
 impl FileInfo {
     /// Build the client-facing view of a row, including URL and Markdown.
     pub fn from_record(record: &FileRecord, cfg: &Config) -> Self {
-        let url = cfg.public_url(&record.sha256);
+        let url = cfg.public_url(&record.r2_key);
         Self {
             id: record.id.clone(),
             sha256: record.sha256.clone(),
@@ -59,12 +61,9 @@ pub fn build_markdown(name: &str, url: &str) -> String {
     format!("![{label}]({url})")
 }
 
-/// The R2 key for a given content hash.
-///
-/// Matches the public path (`/i/<sha256>`) so a key can be read straight off a
-/// URL, but the two are independent: this is storage layout, that is routing.
-pub fn r2_key_for(sha256: &str) -> String {
-    format!("i/{sha256}")
+/// Storage key and public path for one image.
+pub fn r2_key_for(id: &str, ext: &str) -> String {
+    format!("i/{id}.{ext}")
 }
 
 // ---------------------------------------------------------------------------
@@ -189,7 +188,9 @@ pub async fn handle_upload(
         });
     }
 
-    let key = r2_key_for(&declared);
+    let ext = extension_for_type(content_type)
+        .ok_or(ApiError::UnsupportedMediaType("unsupported_file_type"))?;
+    let key = r2_key_for(&public_image_id(), ext);
     let r2 = R2::new(&cfg.r2);
     let bucket = r2.bucket.clone();
     let etag = r2
@@ -225,10 +226,11 @@ pub async fn handle_upload(
             deduplicated: false,
         }),
 
-        // Lost a race against a concurrent upload of the same bytes. The R2
-        // object is identical (same content hash, same key), so we simply adopt
-        // the winner's row. One object, one row, one URL.
-        Err(_) => match db.find_file_by_sha256(&declared).await? {
+        // Lost a race against a concurrent upload of the same bytes. That upload
+        // owns the public name, so drop the object we just wrote.
+        Err(_) => {
+            let _ = r2.delete(&bucket, &record.r2_key).await;
+            match db.find_file_by_sha256(&declared).await? {
             Some(existing) => Ok(UploadOutcome {
                 file: FileInfo::from_record(&existing, cfg),
                 deduplicated: true,
@@ -238,7 +240,8 @@ pub async fn handle_upload(
             None => Err(ApiError::Internal(
                 "insert failed and no duplicate row found".into(),
             )),
-        },
+            }
+        }
     }
 }
 

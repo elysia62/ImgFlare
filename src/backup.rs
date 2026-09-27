@@ -1,12 +1,12 @@
-//! Daily D1 backup: D1 → SQL dump → private R2 → `d1/latest.sql`.
+//! Daily D1 backup: D1 → SQL dump → `back/latest.sql` in the image bucket.
 //!
 //! Design rules, in order of importance:
 //!
-//! 1. **Never destroy a good backup.** The existing `d1/latest.sql` is only
+//! 1. **Never destroy a good backup.** The existing `back/latest.sql` is only
 //!    replaced once a brand new dump has been produced, verified and uploaded
 //!    successfully. Any failure leaves the old object untouched.
 //! 2. **Only one backup file ever exists.** No dated files, no history, no
-//!    listing — just `d1/latest.sql`.
+//!    listing — just `back/latest.sql`.
 //! 3. The dump itself comes from the D1 binding (`D1Database::dump`). The SQL
 //!    file is written with the same R2 access key used for images.
 
@@ -18,7 +18,7 @@ use crate::utils::{now_ms, random_token, sha256_hex};
 use worker::Env;
 
 /// Where the single backup object lives.
-pub const LATEST_KEY: &str = "d1/latest.sql";
+pub const LATEST_KEY: &str = "back/latest.sql";
 
 /// How many times the whole job is attempted by the cron handler.
 pub const MAX_ATTEMPTS: u32 = 3;
@@ -33,8 +33,8 @@ pub struct BackupReport {
 
 /// Run one complete backup attempt.
 ///
-/// Returns `Ok(report)` only when a verified SQL dump is sitting in the private
-/// bucket under `d1/latest.sql`.
+/// Returns `Ok(report)` only when a verified SQL dump is sitting at
+/// `back/latest.sql` in the image bucket.
 pub async fn run_backup(env: &Env, _cfg: &Config) -> ApiResult<BackupReport> {
     // --- 1. Produce the dump ----------------------------------------------
     let db = Db::from_env(env)?;
@@ -51,7 +51,7 @@ pub async fn run_backup(env: &Env, _cfg: &Config) -> ApiResult<BackupReport> {
     let size = sql.len() as u64;
 
     let r2 = R2::new(&_cfg.r2);
-    let bucket = r2.backup_bucket.clone();
+    let bucket = r2.bucket.clone();
     let metadata = vec![
         ("backup-type".to_string(), "d1".to_string()),
         ("format".to_string(), "sql".to_string()),
@@ -64,7 +64,7 @@ pub async fn run_backup(env: &Env, _cfg: &Config) -> ApiResult<BackupReport> {
         metadata: metadata.clone(),
     };
 
-    let tmp_key = format!("d1/.tmp/latest-{}.sql", random_token(16));
+    let tmp_key = format!("back/.tmp/latest-{}.sql", random_token(16));
     r2.put(&bucket, &tmp_key, &sql, opts()).await?;
     r2.put(&bucket, LATEST_KEY, &sql, opts()).await?;
     let _ = r2.delete(&bucket, &tmp_key).await;
@@ -86,7 +86,7 @@ pub async fn run_backup(env: &Env, _cfg: &Config) -> ApiResult<BackupReport> {
 /// Run the backup with up to [`MAX_ATTEMPTS`] attempts.
 ///
 /// A failed attempt is retried after a short pause. If every attempt fails, the
-/// previous `d1/latest.sql` is still intact — nothing is ever deleted on failure.
+/// previous `back/latest.sql` is still intact — nothing is ever deleted on failure.
 pub async fn run_backup_with_retries(env: &Env, cfg: &Config) -> ApiResult<BackupReport> {
     let mut last_err: Option<ApiError> = None;
 
@@ -115,9 +115,9 @@ pub struct BackupStatus {
     pub uploaded_at: Option<i64>,
 }
 
-/// Read the status of `d1/latest.sql` without downloading its body.
+/// Read the status of `back/latest.sql` without downloading its body.
 pub async fn read_status(r2: &R2) -> ApiResult<BackupStatus> {
-    let bucket = r2.backup_bucket.clone();
+    let bucket = r2.bucket.clone();
     match r2.head(&bucket, LATEST_KEY).await? {
         Some(obj) => Ok(BackupStatus {
             exists: true,
@@ -137,9 +137,9 @@ pub async fn read_status(r2: &R2) -> ApiResult<BackupStatus> {
     }
 }
 
-/// Download `d1/latest.sql` for the admin.
+/// Download `back/latest.sql` for the admin.
 pub async fn download_latest(r2: &R2) -> ApiResult<Vec<u8>> {
-    let bucket = r2.backup_bucket.clone();
+    let bucket = r2.bucket.clone();
     let mut object = match r2.get(&bucket, LATEST_KEY).await {
         Err(ApiError::NotFound(_)) => {
             return Err(ApiError::NotFound("no_backup_available"));

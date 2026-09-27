@@ -31,7 +31,6 @@ pub struct R2 {
     access_key_id: String,
     secret_access_key: String,
     pub bucket: String,
-    pub backup_bucket: String,
 }
 
 impl R2 {
@@ -41,7 +40,6 @@ impl R2 {
             access_key_id: settings.access_key_id.clone(),
             secret_access_key: settings.secret_access_key.clone(),
             bucket: settings.bucket.clone(),
-            backup_bucket: settings.backup_bucket.clone(),
         }
     }
 

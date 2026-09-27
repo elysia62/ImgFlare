@@ -15,7 +15,7 @@
 //!
 //! ```text
 //! R2 image bucket    i/<sha256>
-//! R2 backup bucket   d1/latest.sql
+//!                    back/latest.sql
 //! D1                 files, api_tokens, kv_meta
 //! ```
 
@@ -64,7 +64,7 @@ pub async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) 
     // The cron handler reports through the return value only — see the note on
     // logging in `error.rs`.
     if let Ok(cfg) = config::Config::from_env(&env) {
-        // Already retried inside; on failure the previous `d1/latest.sql` is
+        // Already retried inside; on failure the previous `back/latest.sql` is
         // left untouched, which is the outcome that matters.
         let _ = backup::run_backup_with_retries(&env, &cfg).await;
     }

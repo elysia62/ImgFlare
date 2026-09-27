@@ -176,7 +176,9 @@ curl -X POST "$ORIGIN/api/upload" \
 
 上传一个 PDF、`.html` 或把 HTML 改名为 `x.png`。
 
-**期望**：`HTTP 415`，`{"success":false,"error":"unsupported_file_type"}`。不会写入 R2。
+**期望**：上传返回 `HTTP 415`，`{"success":false,"error":"unsupported_file_type"}`。不会写入 R2。
+
+如果对象的类型不是图片，公开地址 `/i/<hash>` 返回 **404**，不返回文件内容。
 
 ---
 
@@ -408,7 +410,8 @@ D1 backup uploaded (size=... sha256=... at=...)
 ## 27. `latest.sql`
 
 ```bash
-bunx wrangler r2 object get imgflare-backup-bucket/d1/latest.sql --file=check.sql
+aws s3 cp s3://$R2_BUCKET/back/latest.sql check.sql \
+  --endpoint-url https://$R2_ACCOUNT_ID.r2.cloudflarestorage.com
 head -20 check.sql
 ```
 
@@ -422,15 +425,16 @@ head -20 check.sql
 
 1. 先确认已有备份：
    ```bash
-   bunx wrangler r2 object get imgflare-backup-bucket/d1/latest.sql --file=before.sql
-   sha256sum before.sql        # 记下这个哈希
+   aws s3 cp s3://$R2_BUCKET/back/latest.sql before.sql \
+     --endpoint-url https://$R2_ACCOUNT_ID.r2.cloudflarestorage.com
+   sha256sum before.sql
    ```
 
-2. 故意让备份失败 —— 把 `R2_BACKUP_BUCKET` 改成一个不存在的桶名，重新部署，再点「立即备份」。
+2. 故意让备份失败 —— 把 `R2_BUCKET` 改成一个不存在的桶名，重新部署，再点「立即备份」。
 
-3. **期望**：备份失败。把变量改回去之前，原来的 `d1/latest.sql` 还在，哈希不变。
+3. **期望**：备份失败。把变量改回去之前，原来的 `back/latest.sql` 还在，哈希不变。
 
-4. 把 `R2_BACKUP_BUCKET` 改回正确的桶名并重新部署。
+4. 把 `R2_BUCKET` 改回正确的桶名并重新部署。
 
 ---
 
@@ -443,25 +447,22 @@ head -20 check.sql
 同时确认后台「设置」卡片显示的 `SHA-256` 与实际下载文件一致：
 
 ```bash
-bunx wrangler r2 object get imgflare-backup-bucket/d1/latest.sql --file=now.sql
+aws s3 cp s3://$R2_BUCKET/back/latest.sql now.sql \
+  --endpoint-url https://$R2_ACCOUNT_ID.r2.cloudflarestorage.com
 sha256sum now.sql
 ```
 
 ---
 
-## 30. ⚠️ Backup Bucket 无公共访问
+## 30. ⚠️ 桶没有公共访问
+
+图片和 `back/latest.sql` 在同一个桶。不要给这个桶开 R2 Public access，也不要绑 Custom Domain。公开图片只走 Worker 的 `/i/<sha256>`。
 
 ```bash
-# Bucket 不应有任何 Custom Domain
-curl -i "https://<backup-bucket-的假想域名>/d1/latest.sql"
+curl -i "https://<桶的假想公共域名>/back/latest.sql"
 ```
 
 **期望**：无法访问。
-
-在 Dashboard 确认 `imgflare-backup-bucket`：
-- Settings → Public access 是**关闭**的
-- 没有绑定任何 Custom Domain
-- 只有上面那把访问密钥能读写
 
 ---
 

@@ -48,20 +48,28 @@ function fail(msg, hint) {
 // ---------------------------------------------------------------------------
 
 /**
- * Ask rustc directly rather than shelling out to `rustup`: distro-packaged Rust
- * (Arch, Fedora, Debian) has no `rustup` at all and still ships the target.
+ * The wasm32 target is not part of a normal rustup install. On Cloudflare's
+ * build image this runs right after rustup-init; locally a distro rustc that
+ * already has the target is left alone.
  */
 function requireRustTarget() {
-  const r = spawnSync("rustc", ["--print", "target-libdir", "--target", "wasm32-unknown-unknown"], {
-    encoding: "utf8",
-  });
-  const dir = (r.stdout ?? "").trim();
-  if (r.status !== 0 || !dir || !existsSync(dir)) {
-    fail(
-      "Rust target wasm32-unknown-unknown is missing.",
-      "Install it with `rustup target add wasm32-unknown-unknown` (the build command in README does this).",
-    );
-  }
+  const ready = () => {
+    const r = spawnSync("rustc", ["--print", "target-libdir", "--target", "wasm32-unknown-unknown"], {
+      encoding: "utf8",
+    });
+    const dir = (r.stdout ?? "").trim();
+    return r.status === 0 && dir.length > 0 && existsSync(dir);
+  };
+  if (ready()) return;
+
+  log("installing Rust target wasm32-unknown-unknown…");
+  const add = spawnSync("rustup", ["target", "add", "wasm32-unknown-unknown"], { stdio: "inherit" });
+  if (add.status === 0 && ready()) return;
+
+  fail(
+    "Rust target wasm32-unknown-unknown is missing.",
+    "Install Rust with rustup, then run `rustup target add wasm32-unknown-unknown`.",
+  );
 }
 
 /** The `wasm-bindgen` version pinned by Cargo.lock, so CLI and crate agree. */

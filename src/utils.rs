@@ -7,6 +7,9 @@ use sha2::{Digest, Sha256};
 
 type HmacSha256 = Hmac<Sha256>;
 
+/// Length of a public image id. 32 characters from 62 symbols.
+pub const PUBLIC_ID_LEN: usize = 32;
+
 /// Lowercase hex encoding.
 pub fn to_hex(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
@@ -41,6 +44,76 @@ pub fn normalize_sha256(s: &str) -> Option<String> {
         return None;
     }
     Some(s.to_ascii_lowercase())
+}
+
+/// Public file name, the same shape as `4L4V3tZnrvk16TmODWWOyZWDTzov1YY4.png`.
+///
+/// The id is 32 characters from a 62-letter alphabet, so two uploads almost
+/// never pick the same name. The extension is required and checked separately.
+pub fn parse_public_image(name: &str) -> Option<(String, String)> {
+    let (id, ext) = name.rsplit_once('.')?;
+    if !is_public_id(id) {
+        return None;
+    }
+    if ext.is_empty() || ext.len() > 8 || !ext.bytes().all(|b| b.is_ascii_alphanumeric()) {
+        return None;
+    }
+    Some((id.to_string(), ext.to_ascii_lowercase()))
+}
+
+pub fn is_public_id(id: &str) -> bool {
+    id.len() == PUBLIC_ID_LEN && id.bytes().all(|b| b.is_ascii_alphanumeric())
+}
+
+/// 32-character public id. Letters and digits only, like other image hosts.
+pub fn public_image_id() -> String {
+    const ALPHABET: &[u8; 62] =
+        b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+    let mut out = String::with_capacity(PUBLIC_ID_LEN);
+    while out.len() < PUBLIC_ID_LEN {
+        for &b in &random_bytes(PUBLIC_ID_LEN) {
+            // 62 * 4 = 248. Drop the rest so the leftover values are not biased.
+            if b < 248 {
+                out.push(ALPHABET[(b % 62) as usize] as char);
+                if out.len() == PUBLIC_ID_LEN {
+                    break;
+                }
+            }
+        }
+    }
+    out
+}
+
+/// File extension used in public URLs, for example `jpg` or `png`.
+pub fn extension_for_type(content_type: &str) -> Option<&'static str> {
+    Some(match canonical_image_type(content_type)? {
+        "image/png" => "png",
+        "image/jpeg" => "jpg",
+        "image/webp" => "webp",
+        "image/gif" => "gif",
+        "image/avif" => "avif",
+        "image/bmp" => "bmp",
+        "image/x-icon" => "ico",
+        "image/svg+xml" => "svg",
+        "image/jxl" => "jxl",
+        "image/heic" => "heic",
+        "image/heif" => "heif",
+        "image/tiff" => "tif",
+        _ => return None,
+    })
+}
+
+/// Whether a URL extension agrees with the stored image type.
+///
+/// `jpg` and `jpeg` both mean JPEG. A `.png` on a JPEG is not a match.
+pub fn extension_matches(ext: &str, content_type: &str) -> bool {
+    let Some(want) = canonical_image_type(content_type) else {
+        return false;
+    };
+    let Some(declared) = image_type_for_extension(&format!("f.{ext}")) else {
+        return false;
+    };
+    declared == want || (heif_family(declared) && heif_family(want))
 }
 
 /// Base64url (no padding) encoding, hand rolled to avoid an extra dependency.
@@ -174,7 +247,41 @@ pub fn escape_markdown_text(s: &str) -> String {
 pub fn image_content_type(name: &str, bytes: &[u8]) -> Option<&'static str> {
     let declared = image_type_for_extension(name)?;
     let sniffed = sniff_image(bytes)?;
-    if declared == sniffed { Some(declared) } else { None }
+    if declared == sniffed || heif_family(declared) && heif_family(sniffed) {
+        Some(declared)
+    } else {
+        None
+    }
+}
+
+/// Canonical type for a stored `Content-Type`, or `None` when it is not an
+/// image this host will hand out.
+pub fn canonical_image_type(stored: &str) -> Option<&'static str> {
+    let base = stored
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    Some(match base.as_str() {
+        "image/png" => "image/png",
+        "image/jpeg" => "image/jpeg",
+        "image/webp" => "image/webp",
+        "image/gif" => "image/gif",
+        "image/avif" => "image/avif",
+        "image/bmp" => "image/bmp",
+        "image/x-icon" | "image/vnd.microsoft.icon" => "image/x-icon",
+        "image/svg+xml" => "image/svg+xml",
+        "image/jxl" => "image/jxl",
+        "image/heic" => "image/heic",
+        "image/heif" => "image/heif",
+        "image/tiff" => "image/tiff",
+        _ => return None,
+    })
+}
+
+fn heif_family(content_type: &str) -> bool {
+    content_type == "image/heic" || content_type == "image/heif"
 }
 
 fn image_type_for_extension(name: &str) -> Option<&'static str> {
@@ -196,6 +303,11 @@ fn image_type_for_extension(name: &str) -> Option<&'static str> {
         "avif" => "image/avif",
         "bmp" => "image/bmp",
         "ico" => "image/x-icon",
+        "svg" => "image/svg+xml",
+        "jxl" => "image/jxl",
+        "heic" => "image/heic",
+        "heif" => "image/heif",
+        "tif" | "tiff" => "image/tiff",
         _ => return None,
     })
 }
@@ -219,20 +331,76 @@ fn sniff_image(bytes: &[u8]) -> Option<&'static str> {
     if bytes.starts_with(&[0x00, 0x00, 0x01, 0x00]) {
         return Some("image/x-icon");
     }
-    if is_avif(bytes) {
-        return Some("image/avif");
+    if bytes.starts_with(b"II*\x00") || bytes.starts_with(b"MM\x00*") {
+        return Some("image/tiff");
+    }
+    if is_jxl(bytes) {
+        return Some("image/jxl");
+    }
+    if let Some(kind) = sniff_isobmff(bytes) {
+        return Some(kind);
+    }
+    if is_svg(bytes) {
+        return Some("image/svg+xml");
     }
     None
 }
 
-fn is_avif(bytes: &[u8]) -> bool {
-    if bytes.len() < 12 || &bytes[4..8] != b"ftyp" {
+fn is_jxl(bytes: &[u8]) -> bool {
+    bytes.starts_with(&[0xff, 0x0a])
+        || bytes.starts_with(&[
+            0x00, 0x00, 0x00, 0x0c, b'J', b'X', b'L', b' ', 0x0d, 0x0a, 0x87, 0x0a,
+        ])
+}
+
+/// AVIF and HEIF are both ISO-BMFF. AVIF wins when its brand is present,
+/// because those files also list the generic `mif1` brand.
+fn sniff_isobmff(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.len() < 16 || &bytes[4..8] != b"ftyp" {
+        return None;
+    }
+    let declared = u32::from_be_bytes(bytes[0..4].try_into().ok()?) as usize;
+    let end = declared.clamp(16, bytes.len().min(256));
+    let mut brands = Vec::new();
+    brands.push(&bytes[8..12]);
+    let mut i = 16;
+    while i + 4 <= end {
+        brands.push(&bytes[i..i + 4]);
+        i += 4;
+    }
+    if brands.iter().any(|b| *b == b"avif" || *b == b"avis") {
+        return Some("image/avif");
+    }
+    if brands.iter().any(|b| {
+        matches!(
+            *b,
+            b"heic" | b"heix" | b"hevc" | b"hevx" | b"heim" | b"heis" | b"hevm" | b"hevs"
+        )
+    }) {
+        return Some("image/heic");
+    }
+    if brands
+        .iter()
+        .any(|b| *b == b"heif" || *b == b"mif1" || *b == b"msf1")
+    {
+        return Some("image/heif");
+    }
+    None
+}
+
+fn is_svg(bytes: &[u8]) -> bool {
+    let head = &bytes[..bytes.len().min(1024)];
+    let head = head
+        .strip_prefix(&[0xef, 0xbb, 0xbf])
+        .unwrap_or(head);
+    let Ok(text) = std::str::from_utf8(head) else {
+        return false;
+    };
+    let lower = text.trim_start().to_ascii_lowercase();
+    if lower.starts_with("<!doctype html") || lower.starts_with("<html") {
         return false;
     }
-    let end = bytes.len().min(64);
-    bytes[8..end]
-        .windows(4)
-        .any(|window| window == b"avif" || window == b"avis")
+    lower.starts_with("<svg") || (lower.starts_with("<?xml") && lower.contains("<svg"))
 }
 
 #[cfg(test)]
@@ -249,9 +417,22 @@ mod image_tests {
     }
 
     #[test]
+    fn accepts_svg_jxl_and_other_images() {
+        assert_eq!(
+            image_content_type("a.svg", b"<svg xmlns='http://www.w3.org/2000/svg'></svg>"),
+            Some("image/svg+xml")
+        );
+        assert_eq!(image_content_type("a.jxl", &[0xff, 0x0a, 0x00]), Some("image/jxl"));
+        assert_eq!(image_content_type("a.tif", b"II*\x00rest"), Some("image/tiff"));
+        let heic = b"\x00\x00\x00\x18ftypheic\x00\x00\x00\x00heic";
+        assert_eq!(image_content_type("a.heic", heic), Some("image/heic"));
+    }
+
+    #[test]
     fn rejects_non_images() {
-        assert_eq!(image_content_type("a.svg", b"<svg></svg>"), None);
+        assert_eq!(image_content_type("a.svg", b"<html><svg></svg>"), None);
         assert_eq!(image_content_type("a.pdf", b"%PDF-1.7"), None);
         assert_eq!(image_content_type("a.html", b"<html>"), None);
+        assert_eq!(image_content_type("a.svg", b"<?xml version='1.0'?><html>"), None);
     }
 }

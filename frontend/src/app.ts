@@ -532,7 +532,7 @@ async function refreshBackup(): Promise<void> {
  * a timestamped name so the file list is readable.
  */
 function renamePastedFile(file: File): File {
-  if (/^image\.(png|jpe?g|gif|webp|bmp|avif|ico)$/i.test(file.name) || file.name === 'blob') {
+  if (/^image\.(png|jpe?g|gif|webp|bmp|avif|ico|svg|jxl|heic|heif|tiff?)$/i.test(file.name) || file.name === 'blob') {
     const ext = (file.type.split('/')[1] ?? 'png').replace('jpeg', 'jpg');
     const stamp = new Date()
       .toISOString()

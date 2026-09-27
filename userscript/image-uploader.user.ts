@@ -192,12 +192,12 @@ function enqueue(files: File[]): void {
   for (const file of files) {
     if (file.size === 0) continue;
     counter += 1;
-    const supported = /\.(png|jpe?g|webp|gif|avif|bmp|ico)$/i.test(file.name);
+    const supported = /\.(png|jpe?g|webp|gif|avif|bmp|ico|svg|jxl|heic|heif|tiff?)$/i.test(file.name);
     tasks.push({
       key: `t${counter}`,
       file,
       state: supported ? 'pending' : 'failed',
-      error: supported ? undefined : '只支持图片（png、jpg、webp、gif、avif、bmp、ico）',
+      error: supported ? undefined : '只支持图片（png、jpg、webp、gif、avif、svg、jxl、heic、tiff 等）',
     });
   }
   renderQueue();
@@ -579,7 +579,7 @@ function installDropHandlers(root: HTMLElement): void {
 function pickFiles(): void {
   const input = document.createElement('input');
   input.type = 'file';
-  input.accept = '.png,.jpg,.jpeg,.webp,.gif,.avif,.bmp,.ico,image/png,image/jpeg,image/webp,image/gif,image/avif,image/bmp,image/x-icon';
+  input.accept = '.png,.jpg,.jpeg,.webp,.gif,.avif,.bmp,.ico,.svg,.jxl,.heic,.heif,.tif,.tiff,image/png,image/jpeg,image/webp,image/gif,image/avif,image/bmp,image/x-icon,image/svg+xml,image/jxl,image/heic,image/heif,image/tiff';
   input.multiple = true;
   // 留在 DOM 之外也可以触发；部分浏览器要求节点已挂载。
   input.style.display = 'none';
@@ -597,7 +597,7 @@ function pickFiles(): void {
 
 /** 粘贴进来的图片通常叫 image.png，补上时间戳便于区分。 */
 function renamePasted(file: File): File {
-  if (/^image\.(png|jpe?g|gif|webp|bmp|avif|ico)$/i.test(file.name) || file.name === 'blob') {
+  if (/^image\.(png|jpe?g|gif|webp|bmp|avif|ico|svg|jxl|heic|heif|tiff?)$/i.test(file.name) || file.name === 'blob') {
     const ext = (file.type.split('/')[1] ?? 'png').replace('jpeg', 'jpg');
     const stamp = new Date()
       .toISOString()

@@ -5,13 +5,13 @@
 | | |
 |---|---|
 | 后端 | Rust + workers-rs `0.8.7` → `wasm32-unknown-unknown` |
-| 图片 | R2，内容寻址 `i/<sha256>`，公开路径 `/i/<sha256>` |
+| 图片 | 公开路径 `/i/<32位id>.<ext>`，例如 `/i/4L4V3tZnrvk16TmODWWOyZWDTzov1YY4.png` |
 | 元数据 | D1（`files` / `api_tokens` / `kv_meta`） |
 | 登录 | 用户名 + 密码 + Turnstile（服务端校验） |
 | 会话 | 无状态 HMAC-SHA256 签名 Cookie |
 | 前端 | TypeScript + esbuild，无框架 |
 | 去重 | 浏览器 SHA-256 + R2 checksum + D1 唯一索引 |
-| 备份 | 每日 Cron，D1 → SQL → R2，只保留 `d1/latest.sql` |
+| 备份 | 每日 Cron，D1 → SQL → 同一个桶的 `back/latest.sql` |
 
 一个域名。图片公开可读，其余操作一律需要登录。
 
@@ -43,21 +43,23 @@ Cloudflare 控制台 → **Workers & Pages** → **Create** → **Workers** → 
 
 | 项 | 值 |
 |---|---|
-| Build command | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh -s -- -y --profile minimal && . "$HOME/.cargo/env" && bun run build` |
+| Build command | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh -s -- -y --profile minimal --default-toolchain stable && . "$HOME/.cargo/env" && bun run build` |
 | Deploy command | `bun run deploy` |
 | Root directory | `/` |
 
-Build command 里那段 `curl` 只是为了装 Rust 工具链 —— Cloudflare 构建镜像预装了 Bun，但没有 Rust，而本项目是 Rust/Wasm。`bun run build` 本身会做完全部构建工作。
+Build command 里那段 `curl` 只是为了装 Rust。Cloudflare 构建镜像有 Bun，没有 Rust。`rust-toolchain.toml` 会让第一次调用 `cargo` 时补上 `wasm32-unknown-unknown`，`bun run build` 再完成前端和 Worker。
+
+第一次构建要下载工具链并编译，大概几分钟。免费版 Worker 的 CPU 时间只有 10 毫秒，不够校验上传，部署到 **Workers Paid**。
 
 想拆成多行更易读也可以：
 
 ```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
 . "$HOME/.cargo/env"
 bun run build
 ```
 
-> `wasm32-unknown-unknown` 目标与 `wasm-bindgen` 都由 `bun run build` 自动准备：前者在安装时已包含，后者按 `Cargo.lock` 锁定的版本从 GitHub Releases 下载预编译二进制（约 10 MB，缓存于 `build/.tools/`）。
+> `wasm32-unknown-unknown` 由 `rust-toolchain.toml` 声明，构建脚本发现没有这个目标时会执行 `rustup target add`。`wasm-bindgen` 按 `Cargo.lock` 锁定的版本下载预编译包，缓存在 `build/.tools/`。
 >
 > 不需要 `cargo install worker-build`。原因见 [`scripts/build-worker.mjs`](scripts/build-worker.mjs) 顶部注释。
 
@@ -78,8 +80,8 @@ bun run build
 
 R2 不自动创建。
 
-1. **R2** → **Create bucket**，建两个桶：一个放图片，一个放备份。
-2. **R2** → **Manage R2 API Tokens** → **Create API token**。权限选 Object Read & Write，范围包含这两个桶。
+1. **R2** → **Create bucket**，只建一个桶。图片放在 `i/`，备份放在 `back/`。
+2. **R2** → **Manage R2 API Tokens** → **Create API token**。权限选 Object Read & Write，范围选这个桶。
 3. 记下 Access Key ID、Secret Access Key、Account ID。同一把密钥填到需要同步的其它工具里。
 
 ### 4. 配置变量与密钥
@@ -104,8 +106,7 @@ Worker → **Settings** → **Variables and Secrets**。部署命令带了 `--ke
 | `ORIGIN` | `https://imgflare.xxx.workers.dev` |
 | `TURNSTILE_SITE_KEY` | Turnstile Site Key |
 | `R2_ACCOUNT_ID` | Cloudflare Account ID |
-| `R2_BUCKET` | 图片桶名 |
-| `R2_BACKUP_BUCKET` | 备份桶名 |
+| `R2_BUCKET` | 桶名。图片在 `i/`，备份在 `back/` |
 
 `MAX_UPLOAD_SIZE`、`SESSION_TTL_SECONDS` 在 `wrangler.toml` 里，有默认值。
 
@@ -154,11 +155,11 @@ enabled = false
 ```bash
 ORIGIN=https://你的域名
 
-# 需要登录的接口应 401
-curl -i $ORIGIN/api/files
+# 未登录打开首页应 302 到 /login
+curl -si $ORIGIN/ | head -n 20
 
-# 首页应 200
-curl -i $ORIGIN/
+# 不存在的图片应 404，不要求登录
+curl -si $ORIGIN/i/0123456789ABCDEF0123456789ABCDEF.png | head -n 20
 ```
 
 浏览器打开 `$ORIGIN/login`，用 `ADMIN_USERNAME` + `ADMIN_PASSWORD` 登录，上传一张图，复制 Markdown 贴到别处确认能显示。
@@ -185,8 +186,8 @@ curl -i $ORIGIN/
 
 | 方法 | 路径 | 认证 | 说明 |
 |---|---|---|---|
-| `GET` | `/i/:sha256` | 无 | 原图 |
-| `HEAD` | `/i/:sha256` | 无 | 同上，无响应体 |
+| `GET` | `/i/:id.:ext` | 无 | 原图，例如 `/i/4L4V3tZnrvk16TmODWWOyZWDTzov1YY4.png` |
+| `HEAD` | `/i/:id.:ext` | 无 | 同上，无响应体 |
 
 ### 认证
 
@@ -212,7 +213,7 @@ curl -X POST $ORIGIN/api/upload \
   -F "file=@photo.png"
 ```
 
-只接受图片：`png` `jpg` `jpeg` `webp` `gif` `avif` `bmp` `ico`。扩展名和文件头必须一致，其它类型返回 415。
+只接受图片：`png` `jpg` `jpeg` `webp` `gif` `avif` `bmp` `ico` `svg` `jxl` `heic` `heif` `tif` `tiff`。扩展名和文件头必须一致，其它类型返回 415。公开地址带真实后缀；后缀不对返回 404。
 
 ### 图片
 
@@ -246,9 +247,11 @@ API Token 不能删除图片。
 
 ## 五、安全模型
 
-只存图片。扩展名和文件头不一致，或者不是 `png / jpg / webp / gif / avif / bmp / ico`，上传直接 415。
+只存图片。扩展名和文件头不一致就拒绝上传。
 
-`/i/<sha256>` 对这几种类型按原样返回，并带 `X-Content-Type-Options: nosniff`。其它内容类型会以 `application/octet-stream` 加 `Content-Security-Policy: sandbox` 返回。
+`/i/<id>.<ext>` 不需要登录。后缀和图片类型不一致，或者不是图片，返回 404，不返回文件内容。SVG 会加 `Content-Security-Policy: sandbox`，直接打开时不执行脚本。
+
+不要给 R2 桶开公共访问。图片只从 Worker 的 `/i/` 出去，`back/latest.sql` 不在这条路径上。
 
 写操作比对 `Origin` 和请求自己的 host。未登录访问 `/` 会 `302` 到 `/login`。面板 CSP 只放行本站和 Turnstile。
 
@@ -278,13 +281,13 @@ bun run build:userscript
 每天 04:00 UTC 触发 `scheduled()`：
 
 ```text
-D1 binding dump() → 校验 SHA-256 → 写 d1/.tmp/... → 覆盖 d1/latest.sql → 删临时对象
+D1 binding dump() → 校验 SHA-256 → 写 back/.tmp/... → 覆盖 back/latest.sql → 删临时对象
 ```
 
-用的是 D1 binding 的 `dump()`，写到 `R2_BACKUP_BUCKET`，凭证就是上面那把访问密钥。
+写在图片同一个桶里，凭证就是上面那把访问密钥。公开地址只读 `/i/<id>.<ext>`，读不到 `back/`。不要给这个桶开 R2 公共访问。
 
-1. 新备份上传成功后才覆盖 `d1/latest.sql`。失败时旧文件不动。
-2. 桶里只留这一个对象。
+1. 新备份上传成功后才覆盖 `back/latest.sql`。失败时旧文件不动。
+2. 只留这一个备份。
 3. 失败重试 3 次。
 
 后台「设置」可以下载，也可以看 `backup-sha256` / `backup-at`。
@@ -296,7 +299,7 @@ D1 binding dump() → 校验 SHA-256 → 写 d1/.tmp/... → 覆盖 d1/latest.sq
 ```bash
 AWS_ACCESS_KEY_ID=$R2_ACCESS_KEY_ID \
 AWS_SECRET_ACCESS_KEY=$R2_SECRET_ACCESS_KEY \
-aws s3 cp s3://$R2_BACKUP_BUCKET/d1/latest.sql latest.sql \
+aws s3 cp s3://$R2_BUCKET/back/latest.sql latest.sql \
   --endpoint-url https://$R2_ACCOUNT_ID.r2.cloudflarestorage.com
 
 bunx wrangler d1 execute imgflare-db --remote --file=latest.sql

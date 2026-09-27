@@ -65,12 +65,12 @@
             />
           </svg>
           <p class="drop-title">拖拽图片到这里，或点击选择</p>
-          <p class="drop-hint">png / jpg / webp / gif / avif / bmp / ico · <kbd>Ctrl</kbd>+<kbd>V</kbd> 粘贴</p>
+          <p class="drop-hint">png / jpg / webp / gif / avif / svg / jxl / heic · <kbd>Ctrl</kbd>+<kbd>V</kbd> 粘贴</p>
           <p class="drop-note">相同内容只保存一份，不会重复占用空间</p>
         </div>
 
         <!-- Kept outside the drop zone so a click does not double-trigger. -->
-        <input id="file-input" type="file" accept=".png,.jpg,.jpeg,.webp,.gif,.avif,.bmp,.ico,image/png,image/jpeg,image/webp,image/gif,image/avif,image/bmp,image/x-icon" multiple hidden />
+        <input id="file-input" type="file" accept=".png,.jpg,.jpeg,.webp,.gif,.avif,.bmp,.ico,.svg,.jxl,.heic,.heif,.tif,.tiff,image/png,image/jpeg,image/webp,image/gif,image/avif,image/bmp,image/x-icon,image/svg+xml,image/jxl,image/heic,image/heif,image/tiff" multiple hidden />
 
         <div id="queue-wrap" class="queue-wrap" hidden>
           <div class="queue-header">
@@ -160,7 +160,7 @@
           </div>
           <div id="backup-status" class="kv-list"></div>
           <p class="hint">
-            每天 04:00 UTC 自动备份一次，备份桶只保留一个 <code>d1/latest.sql</code>。
+            每天 04:00 UTC 自动备份一次，和图片放在同一个桶的 <code>back/latest.sql</code>。
           </p>
         </div>
 

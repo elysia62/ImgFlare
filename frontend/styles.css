@@ -226,7 +226,7 @@ code, .mono {
   z-index: 15;
   display: flex;
   gap: 4px;
-  max-width: 940px;
+  max-width: 1120px;
   margin: 0 auto;
   padding: 10px 20px 0;
   background: color-mix(in srgb, var(--bg) 92%, transparent);
@@ -276,7 +276,7 @@ code, .mono {
 }
 
 .layout {
-  max-width: 940px;
+  max-width: 1120px;
   margin: 0 auto;
   padding: 16px 20px 80px;
   display: flex;
@@ -641,59 +641,100 @@ code, .mono {
 .copy-row .copy-input { flex: 1; }
 
 /* -------------------------------------------------------------------------- */
-/* File list                                                                  */
+/* Gallery                                                                    */
 /* -------------------------------------------------------------------------- */
 
 .file-list {
   margin-top: 14px;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 16px;
 }
 
-.file-card {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-sunken);
-  padding: 12px;
+.shot {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 10px;
   min-width: 0;
-}
-
-.file-head { display: flex; gap: 12px; align-items: flex-start; min-width: 0; }
-
-.file-thumb {
-  width: 56px;
-  height: 56px;
-  object-fit: cover;
-  border-radius: var(--radius-sm);
   border: 1px solid var(--border);
+  border-radius: 14px;
   background: var(--bg-elevated);
-  flex: 0 0 auto;
+  box-shadow: var(--shadow);
+  overflow: hidden;
 }
 
-.file-meta { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 5px; }
+.shot-media {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1;
+  background-color: var(--bg-sunken);
+  background-image:
+    linear-gradient(45deg, color-mix(in srgb, var(--text) 6%, transparent) 25%, transparent 25%),
+    linear-gradient(-45deg, color-mix(in srgb, var(--text) 6%, transparent) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, color-mix(in srgb, var(--text) 6%, transparent) 75%),
+    linear-gradient(-45deg, transparent 75%, color-mix(in srgb, var(--text) 6%, transparent) 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+}
 
-.file-name {
-  font-size: 14px;
+.shot-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.shot-media.is-broken::after {
+  content: attr(data-label);
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.shot-caption {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px 12px;
+}
+
+.shot-name {
+  font-size: 13.5px;
   font-weight: 550;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.file-sub {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 10px;
+.shot-sub {
   font-size: 12px;
   color: var(--text-dim);
-  align-items: center;
 }
 
-.file-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.shot-actions {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 58px;
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.shot-actions .btn {
+  background: color-mix(in srgb, var(--bg-elevated) 92%, transparent);
+  border-color: var(--border);
+  backdrop-filter: blur(8px);
+}
+
+.shot:hover .shot-actions,
+.shot:focus-within .shot-actions {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .shot-actions { opacity: 1; position: static; padding: 0 12px 12px; }
+}
 
 .tag {
   display: inline-block;

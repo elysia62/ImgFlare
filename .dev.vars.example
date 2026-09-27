@@ -18,11 +18,9 @@ TURNSTILE_SECRET=1x0000000000000000000000000000000AA
 # Origin the dev server answers on.
 ORIGIN=http://localhost:8787
 
-# R2 S3 API token. Create the buckets and one access key in the dashboard.
-# The same key is what you put into other sync tools.
+# R2 S3 API token. One bucket holds images under i/ and the backup under back/.
 # A value that is empty or starts with YOUR_ is treated as unset.
 R2_ACCOUNT_ID=00000000000000000000000000000000
 R2_ACCESS_KEY_ID=replace-with-access-key-id
 R2_SECRET_ACCESS_KEY=replace-with-secret-access-key
-R2_BUCKET=imgflare-images
-R2_BACKUP_BUCKET=imgflare-backups
+R2_BUCKET=imgflare
