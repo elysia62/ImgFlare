@@ -77,13 +77,13 @@ Bun 不支持版本文件覆盖，只能通过这个环境变量。`package.json
 
 > 以后改动依赖后，本地也要用同一版本跑 `bun install`，否则锁文件版本号会和构建环境对不上。
 
-`bun run deploy` 会执行 `wrangler deploy --keep-vars`，再执行 `wrangler d1 migrations apply DB --remote`。
+`bun run deploy` 会读取上面这 8 个环境变量，写进 Worker，再执行 `wrangler d1 migrations apply DB --remote`。`BUN_VERSION` 只用于构建，不会写进 Worker。
 
 ### 3. 创建页
 
 D1 名字保持 `imgflare-db`，位置 `Automatic`，不要勾读取复制。
 
-创建页只填这些。仓库里不写值。
+填在 **Settings → Build → Build variables and secrets**。仓库里不写值。这一页的值只在构建时能读到，部署命令会把它们写进 Worker。选「变量」或「密钥」都可以。
 
 | 名称 | 变量 | 加密 |
 |---|---|---|
@@ -106,7 +106,7 @@ R2 桶要自己先建好。不要开公共访问。
 
 Turnstile 在 **Turnstile → Add widget** 里创建。Domain 填 Worker 域名，Widget Mode 选 `Managed`。Site Key 和 Secret Key 填进上面那张表。
 
-之后打开 Worker 域名的 `/login`，用管理员用户名和密码登录。部署命令带了 `--keep-vars`，下次部署不会清掉这一页填的值。
+之后打开 Worker 域名的 `/login`，用管理员用户名和密码登录。改了上面的值要重新部署，部署命令会把新值写进 Worker。
 
 ### 绑定自定义域名（可选）
 
@@ -343,6 +343,10 @@ bun run clean            # 清 dist / build / target
 
 Cloudflare 构建镜像的默认 Bun 比本地旧，读不懂 `bun.lock`。到 **Settings → Build → Build Variables and Secrets** 加 `BUN_VERSION` = `1.4.2`，再重新部署。
 
+**部署报 `required secrets have not been set`**
+
+「变量和机密」里的值只给构建用，wrangler 不会把它当成 Worker 密钥。确认 8 个名字都填了，然后重新部署。`bun run deploy` 会读这些环境变量并写进 Worker。
+
 **部署后所有接口 500**
 
 登录账号、Turnstile 或 R2 没填全。创建页上的值要填完整。
@@ -353,7 +357,7 @@ Cloudflare 构建镜像的默认 Bun 比本地旧，读不懂 `bun.lock`。到 *
 
 **改了变量不生效**
 
-重新部署一次。Deploy command 里的 `--keep-vars` 会保留网页上的变量。
+重新部署一次。部署命令会用构建环境里的新值覆盖 Worker 上的旧值。
 
 **非图片上传失败**
 

@@ -17,7 +17,7 @@
     "build:assets": "bun run build.mjs && bun run build.mjs --userscript",
     "build:worker": "bun run scripts/build-worker.mjs",
     "build": "bun run build:assets && bun run build:worker",
-    "deploy": "bunx wrangler deploy --keep-vars && bunx wrangler d1 migrations apply DB --remote",
+    "deploy": "bun run scripts/deploy.mjs",
     "dev": "bun run build:assets && bunx wrangler d1 migrations apply DB --local && bunx wrangler dev",
     "dev:cron": "bun run build:assets && bunx wrangler dev --test-scheduled",
     "db:migrate:local": "bunx wrangler d1 migrations apply DB --local",
