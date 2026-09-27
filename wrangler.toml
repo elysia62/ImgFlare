@@ -1,0 +1,95 @@
+#:schema node_modules/wrangler/config-schema.json
+
+# ---------------------------------------------------------------------------
+# Personal Image Host
+#
+# Two origins are used by design:
+#
+#   panel.example.com -> this Worker  (login, Turnstile, upload, admin, API)
+#   img.example.com   -> the public R2 bucket, bound as a Custom Domain.
+#                        Never routed through this Worker.
+#
+# Replace every `example.com` below, and every `YOUR_*` placeholder, before
+# deploying. See README.md for the full step-by-step.
+# ---------------------------------------------------------------------------
+
+name = "personal-image-host"
+main = "build/worker/shim.mjs"
+compatibility_date = "2026-09-27"
+
+# Rust/Wasm workers need this flag while the module format settles.
+compatibility_flags = ["nodejs_compat"]
+
+# The frontend is plain static assets served by Cloudflare Workers Static Assets.
+# `/api/*` and `/login` are handled by the Rust worker (see `run_worker_first`).
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+not_found_handling = "none"
+run_worker_first = ["/api/*", "/login"]
+
+# ---------------------------------------------------------------------------
+# Cron: every day at 04:00 UTC (12:00 Asia/Taipei)
+# D1 -> SQL export -> private R2 -> d1/latest.sql
+# ---------------------------------------------------------------------------
+[triggers]
+crons = ["0 4 * * *"]
+
+# ---------------------------------------------------------------------------
+# Public R2 bucket: original images and files, served at img.example.com
+# ---------------------------------------------------------------------------
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "personal-image-host"
+
+# ---------------------------------------------------------------------------
+# Private R2 bucket: D1 SQL backups. Never given a public hostname.
+# ---------------------------------------------------------------------------
+[[r2_buckets]]
+binding = "BACKUP_BUCKET"
+bucket_name = "personal-image-host-backup"
+
+# ---------------------------------------------------------------------------
+# D1: file metadata, SHA-256 index, API tokens
+# ---------------------------------------------------------------------------
+[[d1_databases]]
+binding = "DB"
+database_name = "personal-image-host"
+database_id = "YOUR_DATABASE_ID"
+
+# ---------------------------------------------------------------------------
+# Plain (non-secret) variables.
+#
+# Secrets are NOT here. Set them with:
+#   wrangler secret put ADMIN_PASSWORD
+#   wrangler secret put SESSION_SECRET
+#   wrangler secret put TURNSTILE_SECRET
+#   wrangler secret put CLOUDFLARE_API_TOKEN
+# ---------------------------------------------------------------------------
+[vars]
+# Where uploaded files are publicly reachable. Used to build URL + Markdown.
+PUBLIC_BASE_URL = "https://img.example.com"
+
+# The admin origin, used for CSRF Origin checks and CORS decisions.
+PANEL_ORIGIN = "https://panel.example.com"
+
+# Cloudflare account + D1 database identifiers, needed by the D1 export API.
+ACCOUNT_ID = "YOUR_ACCOUNT_ID"
+DATABASE_ID = "YOUR_DATABASE_ID"
+
+# Maximum single upload size in bytes. Default 50 MiB.
+# 52428800 = 50 * 1024 * 1024
+MAX_UPLOAD_SIZE = "52428800"
+
+# Turnstile site key — public by design, it is rendered by the browser.
+TURNSTILE_SITE_KEY = "YOUR_TURNSTILE_SITE_KEY"
+
+# Session lifetime in seconds. Default 7 days.
+SESSION_TTL_SECONDS = "604800"
+
+# ---------------------------------------------------------------------------
+# Local development overrides.
+# ---------------------------------------------------------------------------
+[vars.local]
+PUBLIC_BASE_URL = "http://localhost:8787"
+PANEL_ORIGIN = "http://localhost:8787"

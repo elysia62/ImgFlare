@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>登录 · 个人图床</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <!--
+    TURNSTILE_SITE_KEY is injected by the Worker when it serves this page.
+    If you are hosting the asset statically, replace the value below manually.
+  -->
+  <body data-page="login" class="page-center" data-turnstile-site-key="YOUR_TURNSTILE_SITE_KEY">
+    <main class="card login-card">
+      <h1 class="login-title">个人图床</h1>
+      <p class="login-subtitle">输入管理员密码以继续</p>
+
+      <form id="login-form" autocomplete="off" novalidate>
+        <label class="field">
+          <span class="field-label">密码</span>
+          <input
+            id="password"
+            name="password"
+            type="password"
+            autocomplete="current-password"
+            required
+          />
+        </label>
+
+        <!-- Turnstile widget mounts here. Collapsed until a real site key is
+             configured, so an unconfigured deploy shows no dead space. -->
+        <div id="turnstile" class="turnstile-host" hidden></div>
+
+        <p id="login-error" class="form-error" hidden></p>
+
+        <button id="login-submit" class="btn btn-primary btn-block" type="submit">
+          登录
+        </button>
+
+        <p id="turnstile-hint" class="login-hint" hidden></p>
+      </form>
+    </main>
+
+    <div id="toasts" class="toasts" aria-live="polite"></div>
+
+    <!--
+      Turnstile is the only external script on the page. It is loaded explicitly
+      rather than deferred so `auth.ts` can render the widget on demand.
+    -->
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit"></script>
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>

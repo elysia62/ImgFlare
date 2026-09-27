@@ -1,0 +1,36 @@
+{
+  "name": "personal-image-host",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Minimal personal image host — Rust/Wasm Worker + R2 + D1 + Turnstile + TypeScript",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "bun": ">=1.2.0"
+  },
+  "packageManager": "bun@1.4.2",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "check:contract": "bun run test/contract.mjs",
+    "build:frontend": "bun run build.mjs",
+    "build:userscript": "bun run build.mjs --userscript",
+    "build:assets": "bun run build.mjs && bun run build.mjs --userscript",
+    "build:worker": "bun run scripts/worker-build.mjs",
+    "build": "bun run build:assets && bun run build:worker",
+    "deploy": "bun run build && bunx wrangler deploy",
+    "dev": "bun run build:assets && bunx wrangler dev",
+    "dev:cron": "bun run build:assets && bunx wrangler dev --test-scheduled",
+    "cron:trigger": "curl -i http://localhost:8787/__scheduled?cron=0+4+*+*+*",
+    "db:migrate:local": "bunx wrangler d1 migrations apply personal-image-host --local",
+    "db:migrate:remote": "bunx wrangler d1 migrations apply personal-image-host --remote",
+    "verify": "bun run typecheck && bun run check:contract && bun run build",
+    "clean": "rm -rf dist build target userscript/image-uploader.user.js"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250109.0",
+    "@types/bun": "latest",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.7.0",
+    "wrangler": "^4.0.0"
+  }
+}

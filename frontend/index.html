@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>个人图床</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body data-page="panel" data-max-upload-size="52428800">
+    <header class="topbar">
+      <div class="topbar-left">
+        <strong class="brand">个人图床</strong>
+        <span id="stats" class="stats"></span>
+      </div>
+      <nav class="topbar-right">
+        <a class="btn btn-ghost btn-sm" href="#files">文件</a>
+        <a class="btn btn-ghost btn-sm" href="#tokens">API Token</a>
+        <a class="btn btn-ghost btn-sm" href="#settings">设置</a>
+        <button id="logout" class="btn btn-ghost btn-sm" type="button">退出</button>
+      </nav>
+    </header>
+
+    <main class="layout">
+      <!-- ------------------------------------------------------------------ -->
+      <!-- Upload                                                             -->
+      <!-- ------------------------------------------------------------------ -->
+      <section class="section" id="upload">
+        <h2 class="section-title">上传</h2>
+
+        <div id="drop-zone" class="drop-zone" tabindex="0" role="button">
+          <p class="drop-title">拖拽文件到这里</p>
+          <p class="drop-hint">点击选择文件</p>
+          <p class="drop-hint">Ctrl + V 粘贴图片</p>
+          <p class="drop-note">支持批量上传，相同内容只会保存一份</p>
+        </div>
+
+        <!-- Kept outside the drop zone so a click does not double-trigger. -->
+        <input id="file-input" type="file" multiple hidden />
+
+        <div class="queue-header">
+          <h3 class="sub-title">上传队列</h3>
+          <button id="clear-finished" class="btn btn-ghost btn-sm" type="button">
+            清除已完成
+          </button>
+        </div>
+        <div id="queue" class="queue"></div>
+      </section>
+
+      <!-- ------------------------------------------------------------------ -->
+      <!-- Files                                                              -->
+      <!-- ------------------------------------------------------------------ -->
+      <section class="section" id="files">
+        <div class="section-head">
+          <h2 class="section-title">我的文件</h2>
+          <div class="section-tools">
+            <input
+              id="search"
+              class="input search-input"
+              type="search"
+              placeholder="搜索文件名"
+              autocomplete="off"
+            />
+            <button id="refresh-files" class="btn btn-ghost btn-sm" type="button">
+              刷新
+            </button>
+          </div>
+        </div>
+
+        <div id="file-list" class="file-list"></div>
+        <button id="load-more" class="btn btn-block" type="button" hidden>
+          加载更多
+        </button>
+      </section>
+
+      <!-- ------------------------------------------------------------------ -->
+      <!-- API tokens                                                         -->
+      <!-- ------------------------------------------------------------------ -->
+      <section class="section" id="tokens">
+        <h2 class="section-title">API Token</h2>
+        <p class="section-desc">
+          油猴脚本使用 Token 上传，Token 不能删除文件，也不能管理后台。
+        </p>
+
+        <form id="token-form" class="token-form" autocomplete="off">
+          <input
+            id="token-name"
+            class="input"
+            type="text"
+            placeholder="名称，例如 Tampermonkey"
+            maxlength="64"
+          />
+          <button class="btn btn-primary" type="submit">生成</button>
+        </form>
+
+        <div id="new-token" class="new-token" hidden></div>
+        <div id="token-list" class="token-list"></div>
+      </section>
+
+      <!-- ------------------------------------------------------------------ -->
+      <!-- Settings / backup                                                  -->
+      <!-- ------------------------------------------------------------------ -->
+      <section class="section" id="settings">
+        <h2 class="section-title">设置</h2>
+
+        <div class="card-inner">
+          <div class="card-inner-head">
+            <h3 class="sub-title">D1 Backup</h3>
+            <div class="card-inner-actions">
+              <a id="backup-download" class="btn btn-sm" href="/api/backup/latest">
+                下载最新备份
+              </a>
+              <button id="backup-run" class="btn btn-ghost btn-sm" type="button">
+                立即备份
+              </button>
+            </div>
+          </div>
+          <div id="backup-status" class="kv-list"></div>
+          <p class="hint">
+            每天 04:00 UTC 自动备份一次，备份桶只保留一个 <code>d1/latest.sql</code>。
+          </p>
+        </div>
+      </section>
+    </main>
+
+    <div id="toasts" class="toasts" aria-live="polite"></div>
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>
