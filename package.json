@@ -6,9 +6,9 @@
   "license": "MIT",
   "type": "module",
   "engines": {
-    "bun": ">=1.2.0"
+    "bun": ">=1.4.0"
   },
-  "packageManager": "bun@1.2.15",
+  "packageManager": "bun@1.4.2",
   "scripts": {
     "typecheck": "tsc --noEmit",
     "check:contract": "bun run test/contract.mjs",

@@ -65,14 +65,17 @@ bun run build
 
 #### 指定 Bun 版本
 
-构建镜像默认 Bun `1.2.15`。要换版本，到 **Settings → Build → Build Variables** 加一个变量（或在本仓库根目录放一个配置文件）：
+构建镜像默认 Bun `1.2.15`，但本仓库的 `bun.lock` 由 Bun `1.4.2` 生成（`lockfileVersion: 2`），旧版读不懂，会直接报 `Unknown lockfile version` 并中止构建。
 
-| 方式 | 内容 |
+所以必须在 **Settings → Build → Build Variables and Secrets** 里加一个变量：
+
+| 变量 | 值 |
 |---|---|
-| 环境变量 | `BUN_VERSION` = `1.2.15` |
-| 版本文件 | 根目录 `.bun-version` |
+| `BUN_VERSION` | `1.4.2` |
 
-两者取其一即可，不需要都设。
+Bun 不支持版本文件覆盖，只能通过这个环境变量。`package.json` 里的 `packageManager` 也写成了 `bun@1.4.2`，保持不变。
+
+> 以后改动依赖后，本地也要用同一版本跑 `bun install`，否则锁文件版本号会和构建环境对不上。
 
 `bun run deploy` 会执行 `wrangler deploy --keep-vars`，再执行 `wrangler d1 migrations apply DB --remote`。
 
@@ -335,6 +338,10 @@ bun run clean            # 清 dist / build / target
 ---
 
 ## 九、常见问题
+
+**构建时报 `Unknown lockfile version`**
+
+Cloudflare 构建镜像的默认 Bun 比本地旧，读不懂 `bun.lock`。到 **Settings → Build → Build Variables and Secrets** 加 `BUN_VERSION` = `1.4.2`，再重新部署。
 
 **部署后所有接口 500**
 
