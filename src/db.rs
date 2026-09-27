@@ -47,6 +47,14 @@ impl Db {
         Ok(Self { inner })
     }
 
+    /// Export the whole database as SQL.
+    ///
+    /// This is the runtime's own export path, so it needs no account-wide API
+    /// token — the D1 binding is already scoped to exactly this database.
+    pub async fn dump(&self) -> ApiResult<Vec<u8>> {
+        self.inner.dump().await.map_err(ApiError::from)
+    }
+
     /// Build a statement. The SQL string here is always a constant.
     fn prepare(&self, sql: &str) -> D1PreparedStatement {
         self.inner.prepare(sql)

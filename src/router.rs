@@ -11,6 +11,7 @@ use crate::config::Config;
 use crate::db::Db;
 use crate::error::{ApiError, ApiResult};
 use crate::files;
+use crate::public;
 use crate::response;
 use crate::tokens;
 use crate::turnstile;
@@ -33,6 +34,14 @@ pub async fn route(req: Request, env: Env, _ctx: worker::Context) -> Result<Resp
     };
 
     match (method, segments.as_slice()) {
+        // -- public files --------------------------------------------------
+        // Served without any authentication: image hosts exist to be embedded
+        // in Markdown and HTML. See `crate::public` for how active content is
+        // kept from executing on this origin.
+        (worker::Method::Get | worker::Method::Head, ["f", hash]) => {
+            public::handle_get(&req, &env, &cfg, hash).await
+        }
+
         // -- pages ---------------------------------------------------------
         (worker::Method::Get, ["login"]) => render_page(&env, &cfg, "/login.html", true).await,
         (worker::Method::Get, []) | (worker::Method::Get, ["index.html"]) => {
@@ -105,9 +114,9 @@ pub async fn route(req: Request, env: Env, _ctx: worker::Context) -> Result<Resp
 /// Serve an HTML page from the static assets binding, with the admin security
 /// headers applied.
 ///
-/// `login.html` carries a placeholder for the Turnstile site key; the Worker
-/// substitutes the configured value so the key lives only in `wrangler.toml`
-/// instead of being duplicated into the checked-in HTML.
+/// The checked-in HTML carries placeholders for values that only exist at
+/// runtime — the Turnstile site key and the upload size cap — so those live in
+/// one place (`wrangler.toml`) instead of being duplicated into the assets.
 async fn render_page(env: &Env, cfg: &Config, asset: &str, is_login: bool) -> ApiResult<Response> {
     let mut response = serve_asset(env, asset).await?;
 
@@ -118,6 +127,8 @@ async fn render_page(env: &Env, cfg: &Config, asset: &str, is_login: bool) -> Ap
 
     if is_login {
         html = html.replace("YOUR_TURNSTILE_SITE_KEY", &cfg.turnstile_site_key);
+    } else {
+        html = html.replace("YOUR_MAX_UPLOAD_SIZE", &cfg.max_upload_size.to_string());
     }
 
     let headers = worker::Headers::new();

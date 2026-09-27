@@ -1,22 +1,22 @@
 //! Personal Image Host — a minimal, single-administrator image and file host.
 //!
 //! ```text
-//! panel.example.com  -> this Rust/Wasm Worker
-//!   ├── login (password + Turnstile)
+//! imgflare.example.com  -> this Rust/Wasm Worker
+//!   ├── GET  /f/<sha256>   public files, no auth
+//!   ├── POST /api/login    username + password + Turnstile
 //!   ├── upload, dedup, list, search, delete
 //!   ├── API tokens for the userscript
 //!   └── daily D1 -> SQL -> private R2 backup
-//!
-//! img.example.com    -> the public R2 bucket, bound as a Custom Domain
-//!   └── GET /f/<sha256>   (no auth, no cookies, no Worker in the path)
 //! ```
+//!
+//! One origin. Public reads need no credentials; everything else does.
 //!
 //! Storage layout:
 //!
 //! ```text
-//! R2 (public)   personal-image-host         f/<sha256>
-//! R2 (private)  personal-image-host-backup  d1/latest.sql
-//! D1            files, api_tokens, kv_meta
+//! R2 (public)   BUCKET         f/<sha256>
+//! R2 (private)  BACKUP_BUCKET  d1/latest.sql
+//! D1            DB             files, api_tokens, kv_meta
 //! ```
 
 mod auth;
@@ -25,6 +25,7 @@ mod config;
 mod db;
 mod error;
 mod files;
+mod public;
 mod response;
 mod router;
 mod tokens;

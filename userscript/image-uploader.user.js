@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         个人图床上传助手
-// @namespace    https://panel.example.com/
+// @namespace    imgflare
 // @version      1.0.0
 // @description  在任意网页通过 Ctrl+V、拖拽或文件选择，把图片和文件上传到自建图床。支持 SHA-256 去重、批量上传、自动重试，并自动插入 Markdown。
 // @author       you
@@ -9,7 +9,8 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
-// @connect      panel.example.com
+// @connect      imgflare.your-subdomain.workers.dev
+// @connect      localhost
 // @run-at       document-idle
 // ==/UserScript==
 

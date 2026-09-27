@@ -83,7 +83,12 @@ impl ApiError {
 
 impl std::fmt::Display for ApiError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} ({})", self.code(), self.status())
+        // `Internal` carries a diagnostic string that never reaches the client;
+        // including it here is what makes server-side logs actionable.
+        match self {
+            ApiError::Internal(detail) => write!(f, "internal_error (500): {detail}"),
+            other => write!(f, "{} ({})", other.code(), other.status()),
+        }
     }
 }
 

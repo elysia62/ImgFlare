@@ -1,8 +1,8 @@
 {
-  "name": "personal-image-host",
+  "name": "imgflare",
   "version": "1.0.0",
   "private": true,
-  "description": "Minimal personal image host — Rust/Wasm Worker + R2 + D1 + Turnstile + TypeScript",
+  "description": "个人图床 — Rust/Wasm Worker + R2 + D1 + Turnstile + TypeScript",
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -21,8 +21,8 @@
     "dev": "bun run build:assets && bunx wrangler dev",
     "dev:cron": "bun run build:assets && bunx wrangler dev --test-scheduled",
     "cron:trigger": "curl -i http://localhost:8787/__scheduled?cron=0+4+*+*+*",
-    "db:migrate:local": "bunx wrangler d1 migrations apply personal-image-host --local",
-    "db:migrate:remote": "bunx wrangler d1 migrations apply personal-image-host --remote",
+    "db:migrate:local": "bunx wrangler d1 migrations apply DB --local",
+    "db:migrate:remote": "bunx wrangler d1 migrations apply DB --remote",
     "verify": "bun run typecheck && bun run check:contract && bun run build",
     "clean": "rm -rf dist build target userscript/image-uploader.user.js"
   },

@@ -310,20 +310,40 @@ pub async fn clear_login_failures(db: &Db, ip: Option<&str>) -> ApiResult<()> {
 ///
 /// Requests authenticated with an API token are exempt: they do not rely on
 /// cookies, so a malicious page cannot ride the user's session.
-pub fn check_origin(req: &Request, cfg: &Config) -> ApiResult<()> {
-    match req.headers().get("Origin").ok().flatten() {
-        Some(origin) => {
-            if origin.trim_end_matches('/') == cfg.panel_origin {
-                Ok(())
-            } else {
-                Err(ApiError::Forbidden("bad_origin"))
-            }
-        }
+pub fn check_origin(req: &Request, _cfg: &Config) -> ApiResult<()> {
+    let presented = match req.headers().get("Origin").ok().flatten() {
+        Some(origin) => origin,
         // Same-origin `fetch()` from older browsers may omit Origin on GET, but
         // a state-changing request without Origin is rejected rather than
         // assumed safe.
-        None => Err(ApiError::Forbidden("missing_origin")),
+        None => return Err(ApiError::Forbidden("missing_origin")),
+    };
+
+    // Compare against the origin the request actually arrived on rather than a
+    // configured value: the same build then works on `*.workers.dev` and on a
+    // custom domain without reconfiguration, and a stale variable cannot
+    // silently weaken the check.
+    let expected = request_origin(req).ok_or(ApiError::Forbidden("bad_origin"))?;
+
+    if presented.trim_end_matches('/').eq_ignore_ascii_case(&expected) {
+        Ok(())
+    } else {
+        Err(ApiError::Forbidden("bad_origin"))
     }
+}
+
+/// Rebuild `scheme://host[:port]` from the request URL, lowercased.
+fn request_origin(req: &Request) -> Option<String> {
+    let url = req.url().ok()?;
+    let host = url.host_str()?;
+
+    let mut origin = format!("{}://{}", url.scheme().to_ascii_lowercase(), host.to_ascii_lowercase());
+    // `Url::port()` is `None` for the scheme's default port, which is exactly
+    // when the browser also omits it from `Origin`.
+    if let Some(port) = url.port() {
+        origin.push_str(&format!(":{port}"));
+    }
+    Some(origin)
 }
 
 // ---------------------------------------------------------------------------

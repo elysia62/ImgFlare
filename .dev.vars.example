@@ -17,17 +17,6 @@ SESSION_SECRET=dev-only-session-secret-please-change-me
 TURNSTILE_SITE_KEY=1x00000000000000000000AA
 TURNSTILE_SECRET=1x0000000000000000000000000000000AA
 
-# ---------------------------------------------------------------------------
-# Local origins.
-#
-# The Worker refuses to run when PUBLIC_BASE_URL and PANEL_ORIGIN share an
-# origin, so `localhost` and `127.0.0.1` are used deliberately: they are
-# different origins to a browser, and both resolve to the local dev server.
-#
-# Open the panel at http://localhost:8787
-# ---------------------------------------------------------------------------
-PUBLIC_BASE_URL=http://127.0.0.1:8787
-PANEL_ORIGIN=http://localhost:8787
-
-# Only needed to test the D1 backup locally.
-CLOUDFLARE_API_TOKEN=dev-token-not-used-locally
+# Origin the dev server answers on. Overrides the value in `wrangler.toml`;
+# there is no second domain to configure.
+ORIGIN=http://localhost:8787

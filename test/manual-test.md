@@ -32,11 +32,10 @@ bun run check:contract  # Rust 序列化字段 vs TypeScript interface 字段
 
 ---
 
-准备工作：把 `panel.example.com` / `img.example.com` 换成你的真实域名。
+准备工作：把下面换成你的真实地址。只有一个域名。
 
 ```bash
-PANEL=https://panel.example.com
-IMG=https://img.example.com
+ORIGIN=https://imgflare.xxx.workers.dev
 ```
 
 ---
@@ -44,9 +43,9 @@ IMG=https://img.example.com
 ## 1. 错误密码
 
 ```bash
-curl -i -X POST "$PANEL/api/login" \
+curl -i -X POST "$ORIGIN/api/login" \
   -H 'Content-Type: application/json' \
-  -H "Origin: $PANEL" \
+  -H "Origin: $ORIGIN" \
   -d '{"username":"admin","password":"definitely-wrong","cf-turnstile-response":"<有效token>"}'
 ```
 
@@ -56,7 +55,7 @@ curl -i -X POST "$PANEL/api/login" \
 
 ## 2. 正确凭据
 
-用浏览器打开 `$PANEL/login`，完成 Turnstile，输入正确的用户名与密码并提交。
+用浏览器打开 `$ORIGIN/login`，完成 Turnstile，输入正确的用户名与密码并提交。
 
 **期望**：
 - 跳转到 `/`
@@ -69,9 +68,9 @@ curl -i -X POST "$PANEL/api/login" \
 ## 3. Turnstile 失败
 
 ```bash
-curl -i -X POST "$PANEL/api/login" \
+curl -i -X POST "$ORIGIN/api/login" \
   -H 'Content-Type: application/json' \
-  -H "Origin: $PANEL" \
+  -H "Origin: $ORIGIN" \
   -d '{"username":"admin","password":"<正确密码>","cf-turnstile-response":"obviously-invalid"}'
 ```
 
@@ -87,8 +86,8 @@ curl -i -X POST "$PANEL/api/login" \
 
 ```bash
 for i in $(seq 1 10); do
-  curl -s -o /dev/null -w "$i -> %{http_code}\n" -X POST "$PANEL/api/login" \
-    -H 'Content-Type: application/json' -H "Origin: $PANEL" \
+  curl -s -o /dev/null -w "$i -> %{http_code}\n" -X POST "$ORIGIN/api/login" \
+    -H 'Content-Type: application/json' -H "Origin: $ORIGIN" \
     -d '{"username":"admin","password":"bad","cf-turnstile-response":"<有效token>"}'
 done
 ```
@@ -102,7 +101,7 @@ done
 ## 5. 未登录上传
 
 ```bash
-curl -i -X POST "$PANEL/api/upload" -F "file=@test.png"
+curl -i -X POST "$ORIGIN/api/upload" -F "file=@test.png"
 ```
 
 **期望**：`HTTP/1.1 401`。
@@ -118,9 +117,9 @@ curl -i -X POST "$PANEL/api/upload" -F "file=@test.png"
 用 curl 验证（先导出 Cookie）：
 
 ```bash
-curl -X POST "$PANEL/api/upload" \
+curl -X POST "$ORIGIN/api/upload" \
   -b cookies.txt \
-  -H "Origin: $PANEL" \
+  -H "Origin: $ORIGIN" \
   -H "X-File-SHA256: $(sha256sum test.png | cut -d' ' -f1)" \
   -F "file=@test.png"
 ```
@@ -136,7 +135,7 @@ curl -X POST "$PANEL/api/upload" \
 **期望**：
 - 文件名为 `pasted-<时间戳>.png`
 - `content_type` 为 `image/png`
-- Markdown 形如 `![pasted-20260927-120000.png](https://img.example.com/f/...)`
+- Markdown 形如 `![pasted-20260927-120000.png](https://<你的域名>/f/...)`
 
 ---
 
@@ -177,11 +176,11 @@ curl -X POST "$PANEL/api/upload" \
 
 **期望**：
 - `content_type` = `application/javascript`
-- 可直接用 `$IMG/f/<sha256>` 访问到脚本内容
+- 可直接用 `$ORIGIN/f/<sha256>` 访问到脚本内容
 - Tampermonkey 能从该 URL 安装
 
 ```bash
-curl -sI "$IMG/f/<sha256>" | grep -i content-type
+curl -sI "$ORIGIN/f/<sha256>" | grep -i content-type
 # content-type: application/javascript
 ```
 
@@ -192,7 +191,7 @@ curl -sI "$IMG/f/<sha256>" | grep -i content-type
 后台 → API Token → 生成 → 复制 `cph_...`。
 
 ```bash
-curl -X POST "$PANEL/api/upload" \
+curl -X POST "$ORIGIN/api/upload" \
   -H "X-API-Key: cph_xxx" \
   -H "X-File-SHA256: $(sha256sum test.png | cut -d' ' -f1)" \
   -F "file=@test.png"
@@ -205,7 +204,7 @@ curl -X POST "$PANEL/api/upload" \
 ## 13. ⚠️ Token 不能删除文件
 
 ```bash
-curl -i -X DELETE "$PANEL/api/files/<某个id>" -H "X-API-Key: cph_xxx"
+curl -i -X DELETE "$ORIGIN/api/files/<某个id>" -H "X-API-Key: cph_xxx"
 ```
 
 **期望**：`HTTP/1.1 403`，`{"success":false,"error":"admin_only"}`。
@@ -226,7 +225,7 @@ curl -i -X DELETE "$PANEL/api/files/<某个id>" -H "X-API-Key: cph_xxx"
 ```bash
 # 用 check 接口直接验证
 SHA=$(sha256sum test.png | cut -d' ' -f1)
-curl -X POST "$PANEL/api/upload/check" \
+curl -X POST "$ORIGIN/api/upload/check" \
   -H "X-API-Key: cph_xxx" -H 'Content-Type: application/json' \
   -d "{\"sha256\":\"$SHA\",\"size\":$(stat -c%s test.png)}"
 # {"success":true,"exists":true,"file":{...}}
@@ -241,7 +240,7 @@ curl -X POST "$PANEL/api/upload/check" \
 ```bash
 SHA=$(sha256sum A.png | cut -d' ' -f1)
 for f in A.png B.png; do
-  curl -s -X POST "$PANEL/api/upload" \
+  curl -s -X POST "$ORIGIN/api/upload" \
     -H "X-API-Key: cph_xxx" -H "X-File-SHA256: $SHA" \
     -F "file=@$f" &
 done
@@ -253,7 +252,7 @@ wait
 - 两者返回**同一个 URL**
 - D1 中只有一条记录：
   ```bash
-  bunx wrangler d1 execute personal-image-host --remote \
+  bunx wrangler d1 execute imgflare-db --remote \
     --command "SELECT COUNT(*) FROM files WHERE sha256='$SHA'"
   # 1
   ```
@@ -267,7 +266,7 @@ wait
 
 **期望**：
 - 列表里消失
-- `$IMG/f/<sha256>` 返回 404
+- `$ORIGIN/f/<sha256>` 返回 404
 - D1 记录消失
 
 ⚠️ 再重新上传同一个文件，**URL 应该和之前一样**（因为 key 由内容决定）。
@@ -297,18 +296,39 @@ wait
 
 ```bash
 # 完全不带任何凭据
-curl -i "$IMG/f/<sha256>"
+curl -i "$ORIGIN/f/<sha256>"
 ```
 
 **期望**：`HTTP/1.1 200`，返回文件内容，响应头包含：
 
 ```http
 cache-control: public, max-age=31536000, immutable
+x-content-type-options: nosniff
 ```
 
-⚠️ 同时确认：不带 Cookie、不带 `X-API-Key`、不经过 `$PANEL/api/...`。
+⚠️ 同时确认：不带 Cookie、不带 `X-API-Key`、不经过 `$ORIGIN/api/...`。
 
 图片 URL 直接贴进任意 Markdown 渲染器都应该正常显示。
+
+⚠️ **同源部署的关键安全点**：上传一个 HTML，访问它，确认**没有执行脚本**。
+
+```bash
+cat > evil.html <<'EOF'
+<!doctype html><script>document.title='EXECUTED'</script>
+EOF
+H=$(sha256sum evil.html | cut -d' ' -f1)
+curl -s -X POST "$ORIGIN/api/upload" -b cookies.txt -H "Origin: $ORIGIN" \
+  -H "X-File-SHA256: $H" -F "file=@evil.html"
+
+# 声明类型必须是 text/plain，不能是 text/html
+curl -s -D - -o /dev/null "$ORIGIN/f/$H" | grep -i content-type
+```
+
+**期望**：`content-type: text/plain; charset=utf-8` + `content-security-policy: sandbox`。
+浏览器打开该 URL 应显示**源代码文本**，标题栏保持原样。
+
+同样测 `.svg`（应保持 `image/svg+xml` 且带 `sandbox`）和 `.user.js`
+（应保持 `application/javascript`，这样 Tampermonkey 才能安装）。
 
 ---
 
@@ -333,7 +353,7 @@ dd if=/dev/urandom of=big.bin bs=1M count=60
 ## 21. 非法 SHA-256
 
 ```bash
-curl -i -X POST "$PANEL/api/upload/check" \
+curl -i -X POST "$ORIGIN/api/upload/check" \
   -H "X-API-Key: cph_xxx" -H 'Content-Type: application/json' \
   -d '{"sha256":"not-a-hash","size":1}'
 ```
@@ -347,9 +367,9 @@ curl -i -X POST "$PANEL/api/upload/check" \
 ## 22. 路径穿越
 
 ```bash
-curl -i "$IMG/f/../../../etc/passwd"
-curl -i "$IMG/f/..%2f..%2fsecret"
-curl -i "$PANEL/api/files/..%2f..%2fetc"
+curl -i "$ORIGIN/f/../../../etc/passwd"
+curl -i "$ORIGIN/f/..%2f..%2fsecret"
+curl -i "$ORIGIN/api/files/..%2f..%2fetc"
 ```
 
 **期望**：全部 404 或 400，**不会**命中任何对象。
@@ -396,23 +416,23 @@ D1 backup uploaded (size=... sha256=... at=...)
 
 ---
 
-## 25. D1 Export
+## 25. D1 dump
 
-观察日志中是否成功创建导出任务并轮询到 `ready`。
+`dump()` 走的是 D1 binding 自带的导出，不需要任何 Cloudflare API Token。
 
-**期望**：没有 `export create rejected` / `export job timed out` 之类的错误。
+**期望**：日志出现 `D1 backup started` 与 `D1 backup uploaded (size=... sha256=...)`。
 
-**若失败**，依次检查：
-- `CLOUDFLARE_API_TOKEN` 是否是 Secret 且有效
-- `ACCOUNT_ID` / `DATABASE_ID` 是否正确
-- Token 权限是否包含 **Account → D1 → Edit**
+**若失败**，检查 Logs 里的具体错误（`ApiError` 的详细原因只写日志、不返回给客户端）。
+
+> 本地 `wrangler dev` 下 `dump()` 固定返回 404 —— miniflare 未实现 D1 导出。
+> 这一条必须在线上验证。
 
 ---
 
 ## 26. `latest.sql`
 
 ```bash
-bunx wrangler r2 object get personal-image-host-backup/d1/latest.sql --file=check.sql
+bunx wrangler r2 object get imgflare-backup-bucket/d1/latest.sql --file=check.sql
 head -20 check.sql
 ```
 
@@ -426,13 +446,15 @@ head -20 check.sql
 
 1. 先确认已有备份：
    ```bash
-   bunx wrangler r2 object get personal-image-host-backup/d1/latest.sql --file=before.sql
+   bunx wrangler r2 object get imgflare-backup-bucket/d1/latest.sql --file=before.sql
    sha256sum before.sql        # 记下这个哈希
    ```
 
-2. 故意让备份失败 —— 把 `CLOUDFLARE_API_TOKEN` 改成一个无效值：
-   ```bash
-   bunx wrangler secret put CLOUDFLARE_API_TOKEN   # 输入一个垃圾值
+2. 故意让备份失败 —— 在 `wrangler.toml` 里给 `BACKUP_BUCKET` 加一个不存在的桶名，重新部署：
+   ```toml
+   [[r2_buckets]]
+   binding = "BACKUP_BUCKET"
+   bucket_name = "definitely-not-a-real-bucket"
    ```
 
 3. 触发一次备份（后台点「立即备份」，或 `__scheduled`）。
@@ -441,15 +463,15 @@ head -20 check.sql
 
 5. 确认旧备份依然存在：
    ```bash
-   bunx wrangler r2 object get personal-image-host-backup/d1/latest.sql --file=after.sql
+   bunx wrangler r2 object get imgflare-backup-bucket/d1/latest.sql --file=after.sql
    sha256sum after.sql
    ```
 
 ⚠️ **`after.sql` 的哈希必须与 `before.sql` 完全相同**。失败绝不能删除或截断旧备份。
 
-6. 恢复正确的 Token：
+6. 把 `bucket_name` 去掉，重新部署，确认备份恢复：
    ```bash
-   bunx wrangler secret put CLOUDFLARE_API_TOKEN
+   # 把 bucket_name 改回去，重新部署
    ```
 
 ---
@@ -463,7 +485,7 @@ head -20 check.sql
 同时确认后台「设置」卡片显示的 `SHA-256` 与实际下载文件一致：
 
 ```bash
-bunx wrangler r2 object get personal-image-host-backup/d1/latest.sql --file=now.sql
+bunx wrangler r2 object get imgflare-backup-bucket/d1/latest.sql --file=now.sql
 sha256sum now.sql
 ```
 
@@ -478,7 +500,7 @@ curl -i "https://<backup-bucket-的假想域名>/d1/latest.sql"
 
 **期望**：无法访问。
 
-在 Dashboard 确认 `personal-image-host-backup`：
+在 Dashboard 确认 `imgflare-backup-bucket`：
 - Settings → Public access 是**关闭**的
 - 没有绑定任何 Custom Domain
 - 只有 Worker 通过 `BACKUP_BUCKET` binding 能读写
@@ -492,27 +514,27 @@ curl -i "https://<backup-bucket-的假想域名>/d1/latest.sql"
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
-PANEL=${PANEL:?set PANEL}
+ORIGIN=${PANEL:?set PANEL}
 TOKEN=${TOKEN:?set TOKEN}
 
 pass() { echo "  ✓ $1"; }
 fail() { echo "  ✗ $1"; exit 1; }
 
 echo "1. 未认证上传应被拒绝"
-code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$PANEL/api/upload" -F "file=@test.png")
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$ORIGIN/api/upload" -F "file=@test.png")
 [ "$code" = "401" ] && pass "401" || fail "expected 401, got $code"
 
 echo "2. 非法 SHA-256 应被拒绝"
-code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$PANEL/api/upload/check" \
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$ORIGIN/api/upload/check" \
   -H "X-API-Key: $TOKEN" -H 'Content-Type: application/json' \
   -d '{"sha256":"bad","size":1}')
 [ "$code" = "400" ] && pass "400" || fail "expected 400, got $code"
 
 echo "3. 合法上传 + 去重"
 SHA=$(sha256sum test.png | cut -d' ' -f1)
-first=$(curl -s -X POST "$PANEL/api/upload" -H "X-API-Key: $TOKEN" \
+first=$(curl -s -X POST "$ORIGIN/api/upload" -H "X-API-Key: $TOKEN" \
   -H "X-File-SHA256: $SHA" -F "file=@test.png" | jq -r '.file.url')
-second=$(curl -s -X POST "$PANEL/api/upload" -H "X-API-Key: $TOKEN" \
+second=$(curl -s -X POST "$ORIGIN/api/upload" -H "X-API-Key: $TOKEN" \
   -H "X-File-SHA256: $SHA" -F "file=@test.png" | jq -r '.file.url')
 [ "$first" = "$second" ] && pass "URL 稳定" || fail "URL 不稳定"
 
@@ -521,8 +543,8 @@ code=$(curl -s -o /dev/null -w '%{http_code}' "$first")
 [ "$code" = "200" ] && pass "200" || fail "expected 200, got $code"
 
 echo "5. Token 不能删除"
-id=$(curl -s "$PANEL/api/files?limit=1" -b cookies.txt | jq -r '.data.files[0].id')
-code=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$PANEL/api/files/$id" -H "X-API-Key: $TOKEN")
+id=$(curl -s "$ORIGIN/api/files?limit=1" -b cookies.txt | jq -r '.data.files[0].id')
+code=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$ORIGIN/api/files/$id" -H "X-API-Key: $TOKEN")
 [ "$code" = "403" ] && pass "403" || fail "expected 403, got $code"
 
 echo "全部通过"

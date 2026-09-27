@@ -123,6 +123,38 @@ async function verifyLocalReferences(dist) {
   }
 }
 
+/**
+ * Pull `ORIGIN` out of `wrangler.toml` and return its host.
+ *
+ * Falls back to `localhost` when the value is still the shipped placeholder or
+ * the file cannot be parsed — the userscript stays installable either way.
+ */
+async function readOriginHost() {
+  try {
+    const text = await Bun.file(`${root}/wrangler.toml`).text();
+    const m = text.match(/^\s*ORIGIN\s*=\s*"([^"]+)"/m);
+    if (!m) return null;
+    const host = new URL(m[1]).hostname;
+    if (!host || host.includes("YOUR-")) return null;
+    return host;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The `@connect` directive(s) to emit.
+ *
+ * Tampermonkey only allows requests to hosts listed here, so the deployed host
+ * must appear. `localhost` is added on top of it so the same build also works
+ * against `wrangler dev`.
+ */
+function connectDirectives(host) {
+  const lines = [`// @connect      ${host ?? "localhost"}`];
+  if (host && host !== "localhost") lines.push("// @connect      localhost");
+  return lines.join("\n");
+}
+
 // ---------------------------------------------------------------------------
 // Tampermonkey userscript
 // ---------------------------------------------------------------------------
@@ -130,7 +162,15 @@ async function buildUserscript() {
   const dir = `${root}/userscript`;
   const outfile = `${dir}/image-uploader.user.js`;
 
-  const header = await Bun.file(`${dir}/metadata.txt`).text();
+  // `@connect` must name the user's own host, or Tampermonkey blocks every
+  // request. Read it out of `wrangler.toml` so the header stays in sync with
+  // whatever they deployed, instead of shipping a placeholder that silently
+  // breaks the script.
+  const originHost = await readOriginHost();
+  const header = (await Bun.file(`${dir}/metadata.txt`).text()).replace(
+    /^\/\/ @connect\s+YOUR-WORKER-HOST\s*$/m,
+    connectDirectives(originHost),
+  );
 
   await build({
     entryPoints: [`${dir}/image-uploader.user.ts`],

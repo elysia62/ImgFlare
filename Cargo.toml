@@ -1,10 +1,9 @@
 [package]
-name = "personal-image-host"
+name = "imgflare"
 version = "1.0.0"
 edition = "2024"
-description = "A minimal personal image host built with Rust/Wasm on Cloudflare Workers, R2 and D1."
+description = "A minimal personal image host: Rust/Wasm on Cloudflare Workers with R2, D1 and Turnstile."
 license = "MIT"
-repository = "https://github.com/example/personal-image-host"
 
 [lib]
 crate-type = ["cdylib"]

@@ -192,6 +192,81 @@ for (const inv of INVARIANTS) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Public-file serving rules
+//
+// The panel and the uploaded files share one origin, so a stored type that a
+// browser renders as a document would be a session-stealing XSS. These cases
+// pin the exact mapping, because a careless edit here is a silent hole.
+// ---------------------------------------------------------------------------
+console.log("\n公开文件响应类型");
+
+{
+  const src = await Bun.file(path.join(ROOT, "src/public.rs")).text();
+
+  // Pull the `match` arms out of `plan_serving`: "type" => plain(...) / sandboxed(...)
+  const arms = new Map();
+  // Matches both `"a" => plain("x")` and the braced, multi-pattern form
+  // `"a" | "b" => { sandboxed("x") }`.
+  const re =
+    /^\s*((?:"[^"]+"\s*\|?\s*)+)=>\s*\{?\s*(plain|sandboxed)\(\s*"([^"]*)"/gm;
+  for (const m of src.matchAll(re)) {
+    const keys = m[1].match(/"([^"]+)"/g) ?? [];
+    for (const k of keys) {
+      arms.set(k.slice(1, -1), { kind: m[2], out: m[3] });
+    }
+  }
+
+  const cases = [
+    // type stored, expected declared type, whether it must be sandboxed
+    ["image/png", "image/png", false],
+    ["image/jpeg", "image/jpeg", false],
+    ["image/svg+xml", "image/svg+xml", true],
+    ["application/pdf", "application/pdf", true],
+    ["application/javascript", "application/javascript", true],
+    ["text/html", "text/plain; charset=utf-8", true],
+    ["application/xml", "text/plain; charset=utf-8", true],
+    ["text/plain", "text/plain; charset=utf-8", false],
+  ];
+
+  let bad = 0;
+  for (const [stored, wantType, wantSandbox] of cases) {
+    const arm = arms.get(stored);
+    if (!arm) {
+      console.log(`  ✗ ${stored}：没有对应的处理分支（会落到默认 case）`);
+      bad++;
+      continue;
+    }
+    if (arm.out !== wantType) {
+      console.log(`  ✗ ${stored}：声明为 ${arm.out}，应为 ${wantType}`);
+      bad++;
+      continue;
+    }
+    if (arm.kind === "sandboxed" !== wantSandbox) {
+      console.log(`  ✗ ${stored}：sandbox 应为 ${wantSandbox}`);
+      bad++;
+      continue;
+    }
+    console.log(`  ✓ ${stored} → ${wantType}${wantSandbox ? " + sandbox" : ""}`);
+  }
+
+  // Every branch must be sandboxed unless it is a known-inert type.
+  const inert = new Set([
+    "image/png", "image/jpeg", "image/webp", "image/gif", "image/avif",
+    "image/bmp", "image/x-icon", "text/plain", "text/css", "application/json",
+    "application/zip", "application/x-7z-compressed",
+  ]);
+  for (const [stored, arm] of arms) {
+    if (!inert.has(stored) && arm.kind !== "sandboxed") {
+      console.log(`  ✗ ${stored} 不是已知惰性类型，却没有 sandbox`);
+      bad++;
+    }
+  }
+
+  if (bad) violations++;
+  else console.log("  ✓ 所有脚本可执行类型都已降级或 sandbox");
+}
+
 console.log();
 if (violations) {
   console.error(`静态检查失败：${violations} 项违规`);
