@@ -51,7 +51,7 @@
 
 名称 `personal-image-host`。创建后复制 **Database ID**。
 
-建表：进入数据库 → **Console** → 粘贴 [`migrations/0001_init.sql`](migrations/0001_init.sql) 全文执行。
+建表：进入数据库 → **Console** → 粘贴 [`migrations/init_01.sql`](migrations/init_01.sql) 全文执行。
 
 ### 3. Turnstile
 
@@ -429,6 +429,11 @@ bun run clean            # 清 dist / build / target
 **部署后所有接口 500**
 
 `wrangler.toml` 里还有 `YOUR_*` 占位值，或 4 个 Secret 没配齐。
+
+**登录页看不到人机验证**
+
+`TURNSTILE_SITE_KEY` 还是占位值。Worker 会直接拒绝服务并报
+`TURNSTILE_SITE_KEY is still the placeholder`，填上真实 Site Key 即可。
 
 **`PUBLIC_BASE_URL and PANEL_ORIGIN must be different origins`**
 

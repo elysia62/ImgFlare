@@ -12,6 +12,9 @@ SESSION_SECRET=dev-only-session-secret-please-change-me
 
 # Turnstile test keys — always pass, safe for local development.
 # https://developers.cloudflare.com/turnstile/troubleshooting/testing/
+# The site key also overrides the placeholder in `wrangler.toml`, so the widget
+# actually renders locally.
+TURNSTILE_SITE_KEY=1x00000000000000000000AA
 TURNSTILE_SECRET=1x0000000000000000000000000000000AA
 
 # ---------------------------------------------------------------------------

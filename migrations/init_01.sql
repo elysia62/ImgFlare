@@ -1,4 +1,4 @@
--- 0001_init.sql
+-- init_01.sql
 -- Personal Image Host — initial D1 schema.
 --
 -- Two real tables (`files`, `api_tokens`) plus one tiny helper table

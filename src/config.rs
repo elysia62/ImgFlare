@@ -26,6 +26,18 @@ impl Config {
             .trim_end_matches('/')
             .to_string();
 
+        // An unsubstituted placeholder would ship a login page whose Turnstile
+        // widget never renders, and the failure would only show up in the
+        // browser. Refuse to serve instead.
+        let turnstile_site_key = var(env, "TURNSTILE_SITE_KEY")?;
+        if turnstile_site_key.starts_with("YOUR_") {
+            return Err(ApiError::Internal(
+                "TURNSTILE_SITE_KEY is still the placeholder from wrangler.toml; \
+                 set it to the Site Key from your Turnstile widget"
+                    .into(),
+            ));
+        }
+
         let panel_origin = var(env, "PANEL_ORIGIN")?
             .trim_end_matches('/')
             .to_string();
@@ -74,10 +86,7 @@ impl Config {
                 .map(|v| v.to_string())
                 .unwrap_or_default(),
             max_upload_size,
-            turnstile_site_key: env
-                .var("TURNSTILE_SITE_KEY")
-                .map(|v| v.to_string())
-                .unwrap_or_default(),
+            turnstile_site_key,
             session_ttl_seconds,
         })
     }

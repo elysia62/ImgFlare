@@ -8,8 +8,9 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <!--
-    TURNSTILE_SITE_KEY is injected by the Worker when it serves this page.
-    If you are hosting the asset statically, replace the value below manually.
+    Turnstile mounts into #turnstile. The Worker substitutes the site key before
+    serving this page; once the challenge is solved the whole widget is hidden
+    again so it does not keep occupying space above the button.
   -->
   <body data-page="login" class="page-center" data-turnstile-site-key="YOUR_TURNSTILE_SITE_KEY">
     <main class="card login-card">
@@ -45,8 +46,7 @@
           />
         </label>
 
-        <!-- Turnstile widget mounts here. Collapsed until a real site key is
-             configured, so an unconfigured deploy shows no dead space. -->
+        <!-- Turnstile mounts here and hides itself once solved. -->
         <div id="turnstile" class="turnstile-host" hidden></div>
 
         <p id="login-error" class="form-error" hidden></p>
@@ -54,8 +54,6 @@
         <button id="login-submit" class="btn btn-primary btn-block" type="submit">
           登录
         </button>
-
-        <p id="turnstile-hint" class="login-hint" hidden></p>
       </form>
     </main>
 

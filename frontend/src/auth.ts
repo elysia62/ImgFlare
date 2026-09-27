@@ -47,23 +47,13 @@ export async function initLoginPage(): Promise<void> {
   const submitButton = byId<HTMLButtonElement>('login-submit');
   const errorBox = byId('login-error');
   const turnstileHost = byId('turnstile');
-  const turnstileHint = byId('turnstile-hint');
 
   const siteKey = document.body.dataset.turnstileSiteKey ?? '';
   let turnstileToken = '';
   let widgetId: string | undefined;
 
-  // Mount the widget once the Turnstile script has loaded.
-  if (siteKey && siteKey !== 'YOUR_TURNSTILE_SITE_KEY') {
-    turnstileHost.hidden = false;
-    mountTurnstile();
-  } else {
-    // Without a configured key the login cannot succeed. Say so plainly instead
-    // of leaving an empty box that looks broken.
-    turnstileHint.textContent =
-      '未配置 Turnstile（TURNSTILE_SITE_KEY）。这是占位符状态的预期表现 —— 填好真实 Site Key 并重新部署后，人机验证框会出现在这里。';
-    turnstileHint.hidden = false;
-  }
+  turnstileHost.hidden = false;
+  mountTurnstile();
 
   function mountTurnstile(): void {
     const attempt = (tries: number): void => {
@@ -74,9 +64,14 @@ export async function initLoginPage(): Promise<void> {
           callback: (token) => {
             turnstileToken = token;
             clearError();
+            // Solved — collapse the widget so it stops reserving space. The
+            // token stays in memory; the widget is only re-shown if the server
+            // rejects it and a fresh one is needed.
+            hideTurnstile();
           },
           'expired-callback': () => {
             turnstileToken = '';
+            showTurnstile();
           },
           'error-callback': () => {
             turnstileToken = '';
@@ -92,6 +87,14 @@ export async function initLoginPage(): Promise<void> {
       window.setTimeout(() => attempt(tries - 1), 200);
     };
     attempt(25); // ~5 seconds of patience
+  }
+
+  function hideTurnstile(): void {
+    turnstileHost.hidden = true;
+  }
+
+  function showTurnstile(): void {
+    turnstileHost.hidden = false;
   }
 
   form.addEventListener('submit', (event) => {
@@ -144,6 +147,7 @@ export async function initLoginPage(): Promise<void> {
       turnstileToken = '';
       if (widgetId && window.turnstile) {
         window.turnstile.reset(widgetId);
+        showTurnstile();
       }
       passwordInput.select();
     } finally {

@@ -116,7 +116,7 @@ async fn render_page(env: &Env, cfg: &Config, asset: &str, is_login: bool) -> Ap
         .await
         .map_err(|e| ApiError::Internal(format!("reading {asset} failed: {e}")))?;
 
-    if is_login && !cfg.turnstile_site_key.is_empty() {
+    if is_login {
         html = html.replace("YOUR_TURNSTILE_SITE_KEY", &cfg.turnstile_site_key);
     }
 

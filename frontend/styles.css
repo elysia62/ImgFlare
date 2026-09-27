@@ -4,6 +4,13 @@
    the OS preference by default and overridable with data-theme on <html>.
    ========================================================================== */
 
+/* Class rules below set `display` (flex/grid), which outranks the UA
+   stylesheet's `[hidden] { display: none }`. Without this, toggling the
+   `hidden` property from JS would silently do nothing. */
+[hidden] {
+  display: none !important;
+}
+
 :root {
   color-scheme: light dark;
 
@@ -827,10 +834,11 @@ code, .mono {
 .toast-error { background: var(--danger); color: var(--bg); }
 .toast-out { opacity: 0; transform: translateY(6px); }
 
-/* Turnstile mounts into this host. It is `hidden` until a real site key is
-   configured, so an unconfigured deploy shows no dead space above the button.
-   The min-height only applies once the widget is actually revealed, which
-   avoids the layout jumping as Turnstile paints. */
+/* Turnstile mounts into this host and hides itself once the challenge is solved.
+   Hiding is a plain `display: none` rather than an animated collapse: the widget
+   is an iframe with its own intrinsic height, so shrinking the container would
+   leave the iframe overflowing. The min-height applies only while visible, to
+   stop the form jumping as Turnstile paints. */
 .turnstile-host {
   display: flex;
   justify-content: center;
@@ -838,15 +846,6 @@ code, .mono {
 }
 .turnstile-host:not([hidden]) {
   min-height: 65px;
-}
-
-/* Shown in place of the widget when TURNSTILE_SITE_KEY is still a placeholder. */
-.login-hint {
-  margin: 14px 0 0;
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--text-faint);
-  text-align: center;
 }
 
 @media (max-width: 560px) {
