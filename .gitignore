@@ -1,0 +1,24 @@
+# Build output
+/target
+/build
+/dist
+/node_modules
+
+# Bun
+/.bun-cache
+
+# Wrangler
+.wrangler/
+.dev.vars
+wrangler.toml.local
+
+# Never commit secrets
+*.env
+.env
+.env.*
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp

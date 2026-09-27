@@ -42,23 +42,34 @@ Cloudflare 控制台 → **Workers & Pages** → **Create** → **Workers** → 
 
 | 项 | 值 |
 |---|---|
-| Build command | 见下方 |
-| Deploy command | `npx wrangler deploy` |
+| Build command | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh -s -- -y --profile minimal && . "$HOME/.cargo/env" && bun run build` |
+| Deploy command | `bunx wrangler deploy` |
 | Root directory | `/` |
 
-构建镜像里没有 Rust，需要现装：
+Build command 里那段 `curl` 只是为了装 Rust 工具链 —— Cloudflare 构建镜像预装了 Bun，但没有 Rust，而本项目是 Rust/Wasm。`bun run build` 本身会做完全部构建工作。
+
+想拆成多行更易读也可以：
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
 . "$HOME/.cargo/env"
-rustup target add wasm32-unknown-unknown
-cargo install worker-build --version 0.8.7 --locked
-cargo install wasm-bindgen-cli --version 0.2.129 --locked
-bun install
 bun run build
 ```
 
-> `wasm-bindgen-cli` 的版本必须与 `Cargo.lock` 里锁定的 `wasm-bindgen` 一致，否则报 `schema version mismatch`。升级依赖后同步改这里的版本号。
+> `wasm32-unknown-unknown` 目标与 `wasm-bindgen` 都由 `bun run build` 自动准备：前者在安装时已包含，后者按 `Cargo.lock` 锁定的版本从 GitHub Releases 下载预编译二进制（约 10 MB，缓存于 `build/.tools/`）。
+>
+> 不需要 `cargo install worker-build`。原因见 [`scripts/build-worker.mjs`](scripts/build-worker.mjs) 顶部注释。
+
+#### 指定 Bun 版本
+
+构建镜像默认 Bun `1.2.15`。要换版本，到 **Settings → Build → Build Variables** 加一个变量（或在本仓库根目录放一个配置文件）：
+
+| 方式 | 内容 |
+|---|---|
+| 环境变量 | `BUN_VERSION` = `1.2.15` |
+| 版本文件 | 根目录 `.bun-version` |
+
+两者取其一即可，不需要都设。
 
 ### 3. 首次部署
 
@@ -369,6 +380,8 @@ curl "http://localhost:8787/__scheduled?cron=0+4+*+*+*"
 ---
 
 ## 八、本地开发
+
+需要 Rust（`rustup` 装，含 `wasm32-unknown-unknown`）与 Bun，其余由 `bun run build` 自理。
 
 ```bash
 bun install

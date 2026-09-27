@@ -8,19 +8,17 @@
   "engines": {
     "bun": ">=1.2.0"
   },
-  "packageManager": "bun@1.4.2",
+  "packageManager": "bun@1.2.15",
   "scripts": {
     "typecheck": "tsc --noEmit",
     "check:contract": "bun run test/contract.mjs",
     "build:frontend": "bun run build.mjs",
     "build:userscript": "bun run build.mjs --userscript",
     "build:assets": "bun run build.mjs && bun run build.mjs --userscript",
-    "build:worker": "bun run scripts/worker-build.mjs",
+    "build:worker": "bun run scripts/build-worker.mjs",
     "build": "bun run build:assets && bun run build:worker",
-    "deploy": "bun run build && bunx wrangler deploy",
     "dev": "bun run build:assets && bunx wrangler dev",
     "dev:cron": "bun run build:assets && bunx wrangler dev --test-scheduled",
-    "cron:trigger": "curl -i http://localhost:8787/__scheduled?cron=0+4+*+*+*",
     "db:migrate:local": "bunx wrangler d1 migrations apply DB --local",
     "db:migrate:remote": "bunx wrangler d1 migrations apply DB --remote",
     "verify": "bun run typecheck && bun run check:contract && bun run build",
