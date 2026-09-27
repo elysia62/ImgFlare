@@ -39,7 +39,7 @@ pub async fn route(req: Request, env: Env, _ctx: worker::Context) -> Result<Resp
         // to be embedded in Markdown and HTML. See `crate::public` for how
         // active content is kept from executing on this origin.
         (worker::Method::Get | worker::Method::Head, ["i", hash]) => {
-            public::handle_get(&req, &env, &cfg, hash).await
+            public::handle_get(&req, &crate::r2::R2::new(&cfg.r2), hash).await
         }
 
         // -- pages ---------------------------------------------------------
@@ -88,10 +88,10 @@ pub async fn route(req: Request, env: Env, _ctx: worker::Context) -> Result<Resp
 
         // -- backup --------------------------------------------------------
         (worker::Method::Get, ["api", "backup", "latest"]) => {
-            handle_download_backup(req, &env).await
+            handle_download_backup(req, &env, &cfg).await
         }
         (worker::Method::Get, ["api", "backup", "status"]) => {
-            handle_backup_status(req, &env).await
+            handle_backup_status(req, &env, &cfg).await
         }
         // Manual trigger, handy for testing without waiting for cron.
         (worker::Method::Post, ["api", "backup", "run"]) => {
@@ -325,7 +325,7 @@ async fn handle_upload(mut req: Request, env: &Env, cfg: &Config) -> ApiResult<R
         .ok()
         .flatten();
 
-    let outcome = upload::handle_upload(&mut req, env, &db, cfg, declared).await?;
+    let outcome = upload::handle_upload(&mut req, &db, cfg, declared).await?;
 
     if let Principal::Token { id } = principal {
         let _ = auth::touch_token_throttled(&db, &id).await;
@@ -381,7 +381,7 @@ async fn handle_delete_file(
     auth::require_admin(env, &req, &db).await?;
     auth::check_origin(&req, cfg)?;
 
-    files::handle_delete(env, &db, id).await?;
+    files::handle_delete(&crate::r2::R2::new(&cfg.r2), &db, id).await?;
     Ok(response::no_content())
 }
 
@@ -448,11 +448,11 @@ async fn handle_purge_token(req: Request, env: &Env, id: &str) -> ApiResult<Resp
 // Backup handlers
 // ---------------------------------------------------------------------------
 
-async fn handle_download_backup(req: Request, env: &Env) -> ApiResult<Response> {
+async fn handle_download_backup(req: Request, env: &Env, cfg: &Config) -> ApiResult<Response> {
     let db = Db::from_env(env)?;
     auth::require_admin(env, &req, &db).await?;
 
-    let bytes = backup::download_latest(env).await?;
+    let bytes = backup::download_latest(&crate::r2::R2::new(&cfg.r2)).await?;
 
     // `Headers` is a reference type; `set` mutates through the shared handle.
     let headers = worker::Headers::new();
@@ -472,11 +472,11 @@ async fn handle_download_backup(req: Request, env: &Env) -> ApiResult<Response> 
     Ok(response::with_headers(200, headers, bytes))
 }
 
-async fn handle_backup_status(req: Request, env: &Env) -> ApiResult<Response> {
+async fn handle_backup_status(req: Request, env: &Env, cfg: &Config) -> ApiResult<Response> {
     let db = Db::from_env(env)?;
     auth::require_admin(env, &req, &db).await?;
 
-    let status = backup::read_status(env).await?;
+    let status = backup::read_status(&crate::r2::R2::new(&cfg.r2)).await?;
     // Field names must match `BackupStatus` in frontend/src/types.ts exactly.
     // The whole API is camelCase; a stray snake_case key here silently renders
     // as `undefined` on the client instead of failing loudly.

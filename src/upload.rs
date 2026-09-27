@@ -12,11 +12,12 @@
 use crate::config::Config;
 use crate::db::{Db, FileRecord};
 use crate::error::{ApiError, ApiResult};
+use crate::r2::{PutOptions, R2};
 use crate::utils::{
-    content_type_for_filename, escape_markdown_text, normalize_sha256, now_ms, random_token,
+    escape_markdown_text, image_content_type, normalize_sha256, now_ms, random_token, sha256_hex,
 };
 use serde::{Deserialize, Serialize};
-use worker::{Bucket, Env, FormEntry, HttpMetadata};
+use worker::FormEntry;
 
 /// The JSON shape of a stored file, shared verbatim with the TypeScript clients.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,24 +43,20 @@ impl FileInfo {
             name: record.original_name.clone(),
             content_type: record.content_type.clone(),
             size: record.size,
-            markdown: build_markdown(&record.original_name, &record.content_type, &url),
+            markdown: build_markdown(&record.original_name, &url),
             url,
             created_at: record.created_at,
         }
     }
 }
 
-/// Images get `![name](url)`; everything else gets `[name](url)`.
+/// Every stored object is an image, so the Markdown form is always `![name](url)`.
 ///
 /// The filename is escaped so brackets or parentheses in a name cannot break out
 /// of the Markdown construct.
-pub fn build_markdown(name: &str, content_type: &str, url: &str) -> String {
+pub fn build_markdown(name: &str, url: &str) -> String {
     let label = escape_markdown_text(name);
-    if content_type.starts_with("image/") {
-        format!("![{label}]({url})")
-    } else {
-        format!("[{label}]({url})")
-    }
+    format!("![{label}]({url})")
 }
 
 /// The R2 key for a given content hash.
@@ -128,12 +125,10 @@ pub struct UploadOutcome {
 
 /// Parse and store an uploaded file.
 ///
-/// `declared_sha256` comes from the `X-File-SHA256` header. It is validated for
-/// shape, then enforced as an R2 checksum so corrupted transfers are rejected at
-/// the storage layer as well.
+/// `declared_sha256` comes from the `X-File-SHA256` header. The bytes are hashed
+/// again here, and R2 checks the same digest on `PutObject`.
 pub async fn handle_upload(
     req: &mut worker::Request,
-    env: &Env,
     db: &Db,
     cfg: &Config,
     declared_sha256: Option<String>,
@@ -168,19 +163,22 @@ pub async fn handle_upload(
         return Err(ApiError::PayloadTooLarge);
     }
 
-    // Content-Type is derived from the extension, never trusted from the client.
-    let content_type = content_type_for_filename(&original_name)
-        .ok_or(ApiError::UnsupportedMediaType("unsupported_file_type"))?;
-
     let bytes = file
         .bytes()
         .await
         .map_err(|e| ApiError::Internal(format!("reading upload failed: {e}")))?;
 
-    // Re-check against the header — the client could have lied, or the multipart
-    // body could have been mangled in transit.
     if bytes.len() != size {
         return Err(ApiError::BadRequest("size_mismatch"));
+    }
+
+    // Extension and file header both have to be a supported image.
+    let content_type = image_content_type(&original_name, &bytes)
+        .ok_or(ApiError::UnsupportedMediaType("unsupported_file_type"))?;
+
+    let actual = sha256_hex(&bytes);
+    if actual != declared {
+        return Err(ApiError::BadRequest("checksum_mismatch"));
     }
 
     // Fast path: someone already stored these exact bytes.
@@ -192,36 +190,23 @@ pub async fn handle_upload(
     }
 
     let key = r2_key_for(&declared);
-    let bucket = env
-        .bucket("BUCKET")
-        .map_err(|e| ApiError::Internal(format!("R2 binding `BUCKET` unavailable: {e}")))?;
-
-    // Reject the transfer at the storage layer if the bytes do not hash to what
-    // the client claimed. `declared` is 32 raw bytes as hex-decoded.
-    let checksum = crate::utils::from_hex(&declared).ok_or(ApiError::BadRequest("invalid_sha256"))?;
-
-    let metadata = HttpMetadata {
-        content_type: Some(content_type.to_string()),
-        // Immutable: the key is a content hash, so the bytes behind it can never
-        // change. Safe to cache essentially forever.
-        cache_control: Some("public, max-age=31536000, immutable".to_string()),
-        ..Default::default()
-    };
-
-    let mut custom = std::collections::HashMap::new();
-    custom.insert("original_name".to_string(), original_name.clone());
-    custom.insert("sha256".to_string(), declared.clone());
-
-    let object = bucket
-        .put(key.clone(), bytes)
-        .http_metadata(metadata)
-        .custom_metadata(custom)
-        .sha256(checksum)
-        .execute()
-        .await
-        .map_err(|e| ApiError::Internal(format!("R2 put failed: {e}")))?;
-
-    let etag = object.map(|o| o.etag()).unwrap_or_default();
+    let r2 = R2::new(&cfg.r2);
+    let bucket = r2.bucket.clone();
+    let etag = r2
+        .put(
+            &bucket,
+            &key,
+            &bytes,
+            PutOptions {
+                content_type: content_type.to_string(),
+                cache_control: Some("public, max-age=31536000, immutable".to_string()),
+                metadata: vec![
+                    ("original-name".to_string(), original_name.clone()),
+                    ("sha256".to_string(), declared.clone()),
+                ],
+            },
+        )
+        .await?;
 
     let record = FileRecord {
         id: random_token(22),
@@ -287,14 +272,8 @@ pub fn is_multipart(req: &worker::Request) -> bool {
         .unwrap_or(false)
 }
 
-/// Delete an object from the public bucket.
-pub async fn delete_object(env: &Env, r2_key: &str) -> ApiResult<()> {
-    let bucket: Bucket = env
-        .bucket("BUCKET")
-        .map_err(|e| ApiError::Internal(format!("R2 binding `BUCKET` unavailable: {e}")))?;
-    bucket
-        .delete(r2_key.to_string())
-        .await
-        .map_err(|e| ApiError::Internal(format!("R2 delete failed: {e}")))?;
-    Ok(())
+/// Delete an object from the image bucket.
+pub async fn delete_object(r2: &R2, r2_key: &str) -> ApiResult<()> {
+    let bucket = r2.bucket.clone();
+    r2.delete(&bucket, r2_key).await
 }

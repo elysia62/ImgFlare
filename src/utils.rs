@@ -18,30 +18,16 @@ pub fn to_hex(bytes: &[u8]) -> String {
     out
 }
 
-/// Decode a lowercase/uppercase hex string. Returns `None` on any invalid input.
-pub fn from_hex(s: &str) -> Option<Vec<u8>> {
-    let bytes = s.as_bytes();
-    // `as_chunks` hands out fixed-size pairs and a remainder; a non-empty
-    // remainder means the input had an odd length.
-    let (pairs, rest) = bytes.as_chunks::<2>();
-    if !rest.is_empty() {
-        return None;
-    }
-
-    let mut out = Vec::with_capacity(pairs.len());
-    for &[hi, lo] in pairs {
-        let hi = (hi as char).to_digit(16)?;
-        let lo = (lo as char).to_digit(16)?;
-        out.push(((hi << 4) | lo) as u8);
-    }
-    Some(out)
+/// SHA-256 of the given bytes.
+pub fn sha256_bytes(data: &[u8]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    hasher.finalize().into()
 }
 
 /// SHA-256 of the given bytes, as lowercase hex.
 pub fn sha256_hex(data: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(data);
-    to_hex(&hasher.finalize())
+    to_hex(&sha256_bytes(data))
 }
 
 /// Is this exactly 64 lowercase/uppercase hex characters?
@@ -180,37 +166,92 @@ pub fn escape_markdown_text(s: &str) -> String {
     out
 }
 
-/// The Content-Type implied by a filename, based on extension only.
+/// Content type of an image, or `None` when the name or the bytes are not one
+/// of the formats this host stores.
 ///
-/// User supplied Content-Type headers are never trusted on their own — the
-/// extension is the source of truth, matching the spec's Content-Type table.
-pub fn content_type_for_filename(name: &str) -> Option<&'static str> {
-    let lower = name.to_ascii_lowercase();
+/// The extension and the file header both have to agree. A `.png` whose bytes
+/// are HTML is rejected, and so is a JPEG renamed to `.html`.
+pub fn image_content_type(name: &str, bytes: &[u8]) -> Option<&'static str> {
+    let declared = image_type_for_extension(name)?;
+    let sniffed = sniff_image(bytes)?;
+    if declared == sniffed { Some(declared) } else { None }
+}
 
-    // `.user.js` must be checked before `.js` — it is still JavaScript.
-    if lower.ends_with(".user.js") {
-        return Some("application/javascript");
+fn image_type_for_extension(name: &str) -> Option<&'static str> {
+    let base = name.rsplit(['/', '\\']).next().unwrap_or(name);
+    let ext = base
+        .rsplit('.')
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    // A name with no dot yields the whole name as `ext`. Require a real dot.
+    if !base.contains('.') {
+        return None;
     }
-
-    let ext = lower.rsplit('.').next().unwrap_or("");
-    Some(match ext {
+    Some(match ext.as_str() {
         "png" => "image/png",
         "jpg" | "jpeg" => "image/jpeg",
         "webp" => "image/webp",
         "gif" => "image/gif",
         "avif" => "image/avif",
-        "svg" => "image/svg+xml",
         "bmp" => "image/bmp",
         "ico" => "image/x-icon",
-        "js" | "mjs" => "application/javascript",
-        "css" => "text/css",
-        "json" => "application/json",
-        "xml" => "application/xml",
-        "txt" => "text/plain",
-        "html" | "htm" => "text/html",
-        "pdf" => "application/pdf",
-        "zip" => "application/zip",
-        "7z" => "application/x-7z-compressed",
         _ => return None,
     })
+}
+
+fn sniff_image(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return Some("image/png");
+    }
+    if bytes.len() >= 3 && bytes[0] == 0xff && bytes[1] == 0xd8 && bytes[2] == 0xff {
+        return Some("image/jpeg");
+    }
+    if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        return Some("image/gif");
+    }
+    if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        return Some("image/webp");
+    }
+    if bytes.starts_with(b"BM") && bytes.len() >= 14 {
+        return Some("image/bmp");
+    }
+    if bytes.starts_with(&[0x00, 0x00, 0x01, 0x00]) {
+        return Some("image/x-icon");
+    }
+    if is_avif(bytes) {
+        return Some("image/avif");
+    }
+    None
+}
+
+fn is_avif(bytes: &[u8]) -> bool {
+    if bytes.len() < 12 || &bytes[4..8] != b"ftyp" {
+        return false;
+    }
+    let end = bytes.len().min(64);
+    bytes[8..end]
+        .windows(4)
+        .any(|window| window == b"avif" || window == b"avis")
+}
+
+#[cfg(test)]
+mod image_tests {
+    use super::image_content_type;
+
+    #[test]
+    fn png_header_and_extension_must_agree() {
+        let png = b"\x89PNG\r\n\x1a\nrest";
+        assert_eq!(image_content_type("a.PNG", png), Some("image/png"));
+        assert_eq!(image_content_type("a.jpg", png), None);
+        assert_eq!(image_content_type("a.png", b"<html>"), None);
+        assert_eq!(image_content_type("noext", png), None);
+    }
+
+    #[test]
+    fn rejects_non_images() {
+        assert_eq!(image_content_type("a.svg", b"<svg></svg>"), None);
+        assert_eq!(image_content_type("a.pdf", b"%PDF-1.7"), None);
+        assert_eq!(image_content_type("a.html", b"<html>"), None);
+    }
 }

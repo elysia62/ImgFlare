@@ -375,7 +375,7 @@ function describeState(task: UploadTask): { label: string; tone: string } {
     case 'checking':
       return { label: '检查重复…', tone: 'muted' };
     case 'duplicate':
-      return { label: '检测到相同文件，已跳过上传', tone: 'ok' };
+      return { label: '检测到相同图片，已跳过上传', tone: 'ok' };
     case 'uploading':
       return { label: '上传中…', tone: 'busy' };
     case 'success':
@@ -478,7 +478,7 @@ async function refreshStats(): Promise<void> {
   try {
     const data = await stats();
     replace(host, [
-      el('span', { text: `${data.files} 个文件` }),
+      el('span', { text: `${data.files} 张图片` }),
       el('span', { class: 'dim', text: '·' }),
       el('span', { text: formatBytes(data.bytes) }),
     ]);
@@ -532,7 +532,7 @@ async function refreshBackup(): Promise<void> {
  * a timestamped name so the file list is readable.
  */
 function renamePastedFile(file: File): File {
-  if (/^image\.(png|jpe?g|gif|webp|bmp)$/i.test(file.name) || file.name === 'blob') {
+  if (/^image\.(png|jpe?g|gif|webp|bmp|avif|ico)$/i.test(file.name) || file.name === 'blob') {
     const ext = (file.type.split('/')[1] ?? 'png').replace('jpeg', 'jpg');
     const stamp = new Date()
       .toISOString()

@@ -192,10 +192,12 @@ function enqueue(files: File[]): void {
   for (const file of files) {
     if (file.size === 0) continue;
     counter += 1;
+    const supported = /\.(png|jpe?g|webp|gif|avif|bmp|ico)$/i.test(file.name);
     tasks.push({
       key: `t${counter}`,
       file,
-      state: 'pending',
+      state: supported ? 'pending' : 'failed',
+      error: supported ? undefined : '只支持图片（png、jpg、webp、gif、avif、bmp、ico）',
     });
   }
   renderQueue();
@@ -268,7 +270,7 @@ async function process(task: Task): Promise<void> {
         lastError = error;
         const message = error instanceof Error ? error.message : 'upload_failed';
         // 4xx（除限流外）重试没有意义。
-        if (/^(unauthorized|token_revoked|invalid_sha256|file_too_large|unsupported_file_type|missing_file|expected_multipart)/.test(message)) {
+        if (/^(unauthorized|token_revoked|invalid_sha256|checksum_mismatch|file_too_large|unsupported_file_type|missing_file|expected_multipart)/.test(message)) {
           break;
         }
         if (attempt < MAX_RETRIES) {
@@ -435,7 +437,7 @@ function panel(): HTMLElement {
 
   const hint = document.createElement('p');
   hint.className = 'pih-hint';
-  hint.textContent = 'Ctrl+V 粘贴图片 · 拖拽文件到页面 · 支持批量';
+  hint.textContent = 'Ctrl+V 粘贴图片 · 拖拽图片到页面 · 支持批量';
 
   const queue = document.createElement('div');
   queue.className = 'pih-queue';
@@ -577,6 +579,7 @@ function installDropHandlers(root: HTMLElement): void {
 function pickFiles(): void {
   const input = document.createElement('input');
   input.type = 'file';
+  input.accept = '.png,.jpg,.jpeg,.webp,.gif,.avif,.bmp,.ico,image/png,image/jpeg,image/webp,image/gif,image/avif,image/bmp,image/x-icon';
   input.multiple = true;
   // 留在 DOM 之外也可以触发；部分浏览器要求节点已挂载。
   input.style.display = 'none';
@@ -594,7 +597,7 @@ function pickFiles(): void {
 
 /** 粘贴进来的图片通常叫 image.png，补上时间戳便于区分。 */
 function renamePasted(file: File): File {
-  if (/^image\.(png|jpe?g|gif|webp|bmp)$/i.test(file.name) || file.name === 'blob') {
+  if (/^image\.(png|jpe?g|gif|webp|bmp|avif|ico)$/i.test(file.name) || file.name === 'blob') {
     const ext = (file.type.split('/')[1] ?? 'png').replace('jpeg', 'jpg');
     const stamp = new Date()
       .toISOString()

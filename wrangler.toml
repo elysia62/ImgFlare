@@ -4,13 +4,15 @@
 # ImgFlare
 #
 # Single origin. `/` is the admin panel (redirects to /login when signed out),
-# `/i/<sha256>` serves public files without authentication, and everything else
+# `/i/<sha256>` serves public images without authentication, and everything else
 # lives under `/api/*` and requires a session or an API token.
 #
-# Deploy via Cloudflare's Git integration: connect the repo, set the build
-# command (see README), and Cloudflare provisions nothing else for you to wire
-# up — the D1 database and both R2 buckets below are created automatically on
-# first deploy.
+# Deploy via Cloudflare's Git integration. Connect the repo and set the build
+# and deploy commands from the README.
+#
+# D1 is created on first deploy. `migrations/init_01.sql` is applied by the
+# deploy command. R2 is not created here: the Worker talks to buckets you
+# create, using an access key you also use for sync.
 # ---------------------------------------------------------------------------
 
 name = "imgflare"
@@ -20,72 +22,37 @@ compatibility_date = "2026-09-27"
 # Rust/Wasm workers need this flag while the module format settles.
 compatibility_flags = ["nodejs_compat"]
 
-# Workers Logs is off. Nothing in this project depends on it: the code emits no
-# progress logging, and the single diagnostic (an internal error) is only
-# written so `wrangler tail` / live logs can show it while debugging.
-# Flip `enabled` to true if you want events retained in the dashboard.
+# Workers Logs is off.
 [observability]
 enabled = false
 
-# The frontend is plain static assets. `/i/*`, `/api/*`, `/login` and `/` are
-# handled by the Rust worker (see `run_worker_first`) so that every response
-# carries the right headers.
 [assets]
 directory = "./dist"
 binding = "ASSETS"
 not_found_handling = "none"
 run_worker_first = ["/", "/index.html", "/login", "/i/*", "/api/*"]
 
-# ---------------------------------------------------------------------------
-# Cron: every day at 04:00 UTC
-# D1 -> SQL dump -> private R2 -> d1/latest.sql
-# ---------------------------------------------------------------------------
+# Every day at 04:00 UTC: D1 -> SQL -> R2 `d1/latest.sql`
 [triggers]
 crons = ["0 4 * * *"]
 
-# ---------------------------------------------------------------------------
-# Bindings.
-#
-# Only `binding` is listed. Cloudflare names the resource after the Worker
-# (`imgflare-bucket`, `imgflare-backup-bucket`, `imgflare-db`) and creates it on
-# first deploy if it does not exist. To use your own names instead, add
-# `bucket_name = "..."` / `database_name = "..."` and optionally
-# `database_id = "..."`.
-# ---------------------------------------------------------------------------
-[[r2_buckets]]
-binding = "BUCKET"
-
-[[r2_buckets]]
-binding = "BACKUP_BUCKET"
-
+# Created on first deploy if it does not exist. Schema comes from
+# `migrations/init_01.sql` (`bun run deploy` applies it).
 [[d1_databases]]
 binding = "DB"
+database_name = "imgflare-db"
+migrations_dir = "migrations"
 
-# ---------------------------------------------------------------------------
-# Plain variables.
-#
-# Secrets are NOT here. Set them in the dashboard
-# (Worker -> Settings -> Variables and Secrets, type "Secret"):
-#   ADMIN_USERNAME      (text is fine — it is not sensitive)
-#   ADMIN_PASSWORD
-#   SESSION_SECRET
-#   TURNSTILE_SECRET
-# ---------------------------------------------------------------------------
+# Values that differ per install are set in the dashboard
+# (Worker -> Settings -> Variables and Secrets), not here:
+#   ORIGIN, ADMIN_USERNAME, TURNSTILE_SITE_KEY
+#   R2_ACCOUNT_ID, R2_BUCKET, R2_BACKUP_BUCKET
+#   ADMIN_PASSWORD, SESSION_SECRET, TURNSTILE_SECRET
+#   R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY
 [vars]
-# Origin this Worker answers on. Used for public file URLs and the "API 地址"
-# hint in the panel; CSRF checks compare against the request's own host.
-# `*.workers.dev` works here too — set it once you know your subdomain.
-ORIGIN = "https://imgflare.YOUR-SUBDOMAIN.workers.dev"
-
-# Admin login name. The password is the secret above.
-ADMIN_USERNAME = "admin"
-
 # Maximum single upload size in bytes. 52428800 = 50 MiB.
 MAX_UPLOAD_SIZE = "52428800"
 
-# Turnstile site key — public by design, it is rendered by the browser.
-# The matching secret goes in `TURNSTILE_SECRET`.
-TURNSTILE_SITE_KEY = "YOUR_TURNSTILE_SITE_KEY"
-
 # Session lifetime in seconds. 604800 = 7 days.
 SESSION_TTL_SECONDS = "604800"
+

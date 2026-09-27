@@ -7,16 +7,15 @@
 //!    successfully. Any failure leaves the old object untouched.
 //! 2. **Only one backup file ever exists.** No dated files, no history, no
 //!    listing — just `d1/latest.sql`.
-//! 3. **No account-wide credentials.** The dump comes from the D1 *binding*
-//!    (`D1Database::dump`), so there is no REST call and no Cloudflare API
-//!    token to manage or leak.
+//! 3. The dump itself comes from the D1 binding (`D1Database::dump`). The SQL
+//!    file is written with the same R2 access key used for images.
 
 use crate::config::Config;
 use crate::db::Db;
 use crate::error::{ApiError, ApiResult};
+use crate::r2::{PutOptions, R2};
 use crate::utils::{now_ms, random_token, sha256_hex};
-use std::collections::HashMap;
-use worker::{Env, HttpMetadata};
+use worker::Env;
 
 /// Where the single backup object lives.
 pub const LATEST_KEY: &str = "d1/latest.sql";
@@ -50,52 +49,25 @@ pub async fn run_backup(env: &Env, _cfg: &Config) -> ApiResult<BackupReport> {
 
     let sha256 = sha256_hex(&sql);
     let size = sql.len() as u64;
-    // R2's checksum argument wants the raw 32 digest bytes.
-    let checksum = crate::utils::from_hex(&sha256).unwrap_or_default();
 
-    // --- 2. Upload to the private backup bucket ---------------------------
-    let bucket = env
-        .bucket("BACKUP_BUCKET")
-        .map_err(|e| ApiError::Internal(format!("R2 binding `BACKUP_BUCKET` unavailable: {e}")))?;
-
-    let mut custom = HashMap::new();
-    custom.insert("backup_type".to_string(), "d1".to_string());
-    custom.insert("format".to_string(), "sql".to_string());
-    custom.insert("backup_sha256".to_string(), sha256.clone());
-    custom.insert("backup_at".to_string(), now_ms().to_string());
-
-    let metadata = HttpMetadata {
-        content_type: Some("application/sql".to_string()),
-        ..Default::default()
+    let r2 = R2::new(&_cfg.r2);
+    let bucket = r2.backup_bucket.clone();
+    let metadata = vec![
+        ("backup-type".to_string(), "d1".to_string()),
+        ("format".to_string(), "sql".to_string()),
+        ("backup-sha256".to_string(), sha256.clone()),
+        ("backup-at".to_string(), now_ms().to_string()),
+    ];
+    let opts = || PutOptions {
+        content_type: "application/sql".to_string(),
+        cache_control: None,
+        metadata: metadata.clone(),
     };
 
     let tmp_key = format!("d1/.tmp/latest-{}.sql", random_token(16));
-
-    // Stage the object first, then promote it. A failure part-way through
-    // therefore never leaves `latest.sql` half-written or truncated.
-    bucket
-        .put(tmp_key.clone(), sql.clone())
-        .http_metadata(metadata.clone())
-        .custom_metadata(custom.clone())
-        .sha256(checksum.clone())
-        .execute()
-        .await
-        .map_err(|e| ApiError::Internal(format!("R2 backup staging failed: {e}")))?;
-
-    // Promote: overwriting `latest.sql` here is the only destructive step, and
-    // it only runs once the new bytes are safely stored.
-    bucket
-        .put(LATEST_KEY, sql)
-        .http_metadata(metadata)
-        .custom_metadata(custom)
-        .sha256(checksum)
-        .execute()
-        .await
-        .map_err(|e| ApiError::Internal(format!("R2 backup promote failed: {e}")))?;
-
-    // Clean up the temporary object; `latest.sql` is the only thing that stays.
-    // A leftover staging object is harmless and gets overwritten next run.
-    let _ = bucket.delete(tmp_key).await;
+    r2.put(&bucket, &tmp_key, &sql, opts()).await?;
+    r2.put(&bucket, LATEST_KEY, &sql, opts()).await?;
+    let _ = r2.delete(&bucket, &tmp_key).await;
 
     // Rate-limit counters are only meaningful for a 15-minute window; sweeping
     // them once a day keeps `kv_meta` from accumulating dead keys. Best effort:
@@ -144,26 +116,18 @@ pub struct BackupStatus {
 }
 
 /// Read the status of `d1/latest.sql` without downloading its body.
-pub async fn read_status(env: &Env) -> ApiResult<BackupStatus> {
-    let bucket = env.bucket("BACKUP_BUCKET").map_err(|e| {
-        ApiError::Internal(format!("R2 binding `BACKUP_BUCKET` unavailable: {e}"))
-    })?;
-
-    let object = bucket
-        .head(LATEST_KEY.to_string())
-        .await
-        .map_err(|e| ApiError::Internal(format!("R2 head failed: {e}")))?;
-
-    match object {
-        Some(obj) => {
-            let custom = obj.custom_metadata().unwrap_or_default();
-            Ok(BackupStatus {
-                exists: true,
-                size: obj.size(),
-                sha256: custom.get("backup_sha256").cloned(),
-                uploaded_at: custom.get("backup_at").and_then(|v| v.parse::<i64>().ok()),
-            })
-        }
+pub async fn read_status(r2: &R2) -> ApiResult<BackupStatus> {
+    let bucket = r2.backup_bucket.clone();
+    match r2.head(&bucket, LATEST_KEY).await? {
+        Some(obj) => Ok(BackupStatus {
+            exists: true,
+            size: obj.size,
+            sha256: obj.metadata.get("backup-sha256").cloned(),
+            uploaded_at: obj
+                .metadata
+                .get("backup-at")
+                .and_then(|v| v.parse::<i64>().ok()),
+        }),
         None => Ok(BackupStatus {
             exists: false,
             size: 0,
@@ -174,23 +138,16 @@ pub async fn read_status(env: &Env) -> ApiResult<BackupStatus> {
 }
 
 /// Download `d1/latest.sql` for the admin.
-pub async fn download_latest(env: &Env) -> ApiResult<Vec<u8>> {
-    let bucket = env.bucket("BACKUP_BUCKET").map_err(|e| {
-        ApiError::Internal(format!("R2 binding `BACKUP_BUCKET` unavailable: {e}"))
-    })?;
-
-    let object = bucket
-        .get(LATEST_KEY.to_string())
-        .execute()
-        .await
-        .map_err(|e| ApiError::Internal(format!("R2 get failed: {e}")))?
-        .ok_or(ApiError::NotFound("no_backup_available"))?;
-
-    let body = object
-        .body()
-        .ok_or(ApiError::NotFound("no_backup_available"))?;
-
-    body.bytes()
+pub async fn download_latest(r2: &R2) -> ApiResult<Vec<u8>> {
+    let bucket = r2.backup_bucket.clone();
+    let mut object = match r2.get(&bucket, LATEST_KEY).await {
+        Err(ApiError::NotFound(_)) => {
+            return Err(ApiError::NotFound("no_backup_available"));
+        }
+        other => other?,
+    };
+    object
+        .bytes()
         .await
         .map_err(|e| ApiError::Internal(format!("reading backup failed: {e}")))
 }

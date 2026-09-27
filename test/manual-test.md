@@ -172,31 +172,11 @@ curl -X POST "$ORIGIN/api/upload" \
 
 ---
 
-## 11. 普通文件（PDF）
+## 11. 非图片被拒绝
 
-上传一个 PDF。
+上传一个 PDF、`.html` 或把 HTML 改名为 `x.png`。
 
-**期望**：
-- Content-Type `application/pdf`
-- Markdown 是 `[name.pdf](url)`，**不是** `![...]`
-
-⚠️ 这是需求明确要求的区分。
-
----
-
-## 12. `.user.js`
-
-上传 `image-uploader.user.js`。
-
-**期望**：
-- `content_type` = `application/javascript`
-- 可直接用 `$ORIGIN/i/<sha256>` 访问到脚本内容
-- Tampermonkey 能从该 URL 安装
-
-```bash
-curl -sI "$ORIGIN/i/<sha256>" | grep -i content-type
-# content-type: application/javascript
-```
+**期望**：`HTTP 415`，`{"success":false,"error":"unsupported_file_type"}`。不会写入 R2。
 
 ---
 
@@ -324,25 +304,7 @@ x-content-type-options: nosniff
 
 图片 URL 直接贴进任意 Markdown 渲染器都应该正常显示。
 
-⚠️ **同源部署的关键安全点**：上传一个 HTML，访问它，确认**没有执行脚本**。
-
-```bash
-cat > evil.html <<'EOF'
-<!doctype html><script>document.title='EXECUTED'</script>
-EOF
-H=$(sha256sum evil.html | cut -d' ' -f1)
-curl -s -X POST "$ORIGIN/api/upload" -b cookies.txt -H "Origin: $ORIGIN" \
-  -H "X-File-SHA256: $H" -F "file=@evil.html"
-
-# 声明类型必须是 text/plain，不能是 text/html
-curl -s -D - -o /dev/null "$ORIGIN/i/$H" | grep -i content-type
-```
-
-**期望**：`content-type: text/plain; charset=utf-8` + `content-security-policy: sandbox`。
-浏览器打开该 URL 应显示**源代码文本**，标题栏保持原样。
-
-同样测 `.svg`（应保持 `image/svg+xml` 且带 `sandbox`）和 `.user.js`
-（应保持 `application/javascript`，这样 Tampermonkey 才能安装）。
+非图片不能上传，见第 11 节。
 
 ---
 
@@ -464,29 +426,11 @@ head -20 check.sql
    sha256sum before.sql        # 记下这个哈希
    ```
 
-2. 故意让备份失败 —— 在 `wrangler.toml` 里给 `BACKUP_BUCKET` 加一个不存在的桶名，重新部署：
-   ```toml
-   [[r2_buckets]]
-   binding = "BACKUP_BUCKET"
-   bucket_name = "definitely-not-a-real-bucket"
-   ```
+2. 故意让备份失败 —— 把 `R2_BACKUP_BUCKET` 改成一个不存在的桶名，重新部署，再点「立即备份」。
 
-3. 触发一次备份（后台点「立即备份」，或 `__scheduled`）。
+3. **期望**：备份失败。把变量改回去之前，原来的 `d1/latest.sql` 还在，哈希不变。
 
-4. **期望**：备份失败并记录错误日志。
-
-5. 确认旧备份依然存在：
-   ```bash
-   bunx wrangler r2 object get imgflare-backup-bucket/d1/latest.sql --file=after.sql
-   sha256sum after.sql
-   ```
-
-⚠️ **`after.sql` 的哈希必须与 `before.sql` 完全相同**。失败绝不能删除或截断旧备份。
-
-6. 把 `bucket_name` 去掉，重新部署，确认备份恢复：
-   ```bash
-   # 把 bucket_name 改回去，重新部署
-   ```
+4. 把 `R2_BACKUP_BUCKET` 改回正确的桶名并重新部署。
 
 ---
 
@@ -517,7 +461,7 @@ curl -i "https://<backup-bucket-的假想域名>/d1/latest.sql"
 在 Dashboard 确认 `imgflare-backup-bucket`：
 - Settings → Public access 是**关闭**的
 - 没有绑定任何 Custom Domain
-- 只有 Worker 通过 `BACKUP_BUCKET` binding 能读写
+- 只有上面那把访问密钥能读写
 
 ---
 

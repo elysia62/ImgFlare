@@ -1,17 +1,17 @@
 # ImgFlare
 
-个人图床 / 文件托管。Rust → WebAssembly → Cloudflare Worker + R2 + D1 + Turnstile。
+个人图床。Rust → WebAssembly → Cloudflare Worker + R2 + D1 + Turnstile。
 
 | | |
 |---|---|
 | 后端 | Rust + workers-rs `0.8.7` → `wasm32-unknown-unknown` |
-| 文件 | R2，内容寻址 `i/<sha256>`，公开路径 `/i/<sha256>` |
+| 图片 | R2，内容寻址 `i/<sha256>`，公开路径 `/i/<sha256>` |
 | 元数据 | D1（`files` / `api_tokens` / `kv_meta`） |
 | 登录 | 用户名 + 密码 + Turnstile（服务端校验） |
 | 会话 | 无状态 HMAC-SHA256 签名 Cookie |
 | 前端 | TypeScript + esbuild，无框架 |
 | 去重 | 浏览器 SHA-256 + R2 checksum + D1 唯一索引 |
-| 备份 | 每日 Cron，D1 → SQL → 私有 R2，只保留 `d1/latest.sql` |
+| 备份 | 每日 Cron，D1 → SQL → R2，只保留 `d1/latest.sql` |
 
 一个域名。图片公开可读，其余操作一律需要登录。
 
@@ -25,10 +25,11 @@
 - [二、配置](#二配置)
 - [三、验收](#三验收)
 - [四、API](#四api)
-- [五、油猴脚本](#五油猴脚本)
-- [六、备份与恢复](#六备份与恢复)
-- [七、本地开发](#七本地开发)
-- [八、常见问题](#八常见问题)
+- [五、安全模型](#五安全模型)
+- [六、油猴脚本](#六油猴脚本)
+- [七、备份与恢复](#七备份与恢复)
+- [八、本地开发](#八本地开发)
+- [九、常见问题](#九常见问题)
 
 ---
 
@@ -43,7 +44,7 @@ Cloudflare 控制台 → **Workers & Pages** → **Create** → **Workers** → 
 | 项 | 值 |
 |---|---|
 | Build command | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh -s -- -y --profile minimal && . "$HOME/.cargo/env" && bun run build` |
-| Deploy command | `bunx wrangler deploy` |
+| Deploy command | `bun run deploy` |
 | Root directory | `/` |
 
 Build command 里那段 `curl` 只是为了装 Rust 工具链 —— Cloudflare 构建镜像预装了 Bun，但没有 Rust，而本项目是 Rust/Wasm。`bun run build` 本身会做完全部构建工作。
@@ -71,114 +72,80 @@ bun run build
 
 两者取其一即可，不需要都设。
 
-### 3. 首次部署
+`bun run deploy` 会执行 `wrangler deploy --keep-vars`，再执行 `wrangler d1 migrations apply DB --remote`。
 
-点 **Deploy**。第一次会失败在配置检查上，因为 `TURNSTILE_SITE_KEY` 还是占位值——这是刻意的，见下一节。
+### 3. 创建 R2 和访问密钥
 
-**D1 数据库和两个 R2 桶会自动创建**，名字由 Worker 名推导：
+R2 不自动创建。
 
-| Binding | 自动创建的资源 |
-|---|---|
-| `DB` | `imgflare-db` |
-| `BUCKET` | `imgflare-bucket` |
-| `BACKUP_BUCKET` | `imgflare-backup-bucket` |
+1. **R2** → **Create bucket**，建两个桶：一个放图片，一个放备份。
+2. **R2** → **Manage R2 API Tokens** → **Create API token**。权限选 Object Read & Write，范围包含这两个桶。
+3. 记下 Access Key ID、Secret Access Key、Account ID。同一把密钥填到需要同步的其它工具里。
 
-不需要提前手工建库建桶，也不需要填任何 ID。
+### 4. 配置变量与密钥
 
-### 4. 建表
+Worker → **Settings** → **Variables and Secrets**。部署命令带了 `--keep-vars`，这里填的值不会被下次部署清掉。
 
-Worker → **D1** → `imgflare-db` → **Console**，粘贴 [`migrations/init_01.sql`](migrations/init_01.sql) 全文执行。
-
-### 5. 配置变量与密钥
-
-Worker → **Settings** → **Variables and Secrets**。
-
-**Secrets**（Type 选 `Secret`）：
+**Secrets**：
 
 | 名称 | 值 |
 |---|---|
-| `ADMIN_PASSWORD` | 管理员密码，建议 20 位以上随机串 |
+| `ADMIN_PASSWORD` | 管理员密码 |
 | `SESSION_SECRET` | `openssl rand -base64 48` |
-| `TURNSTILE_SECRET` | 见第 6 步 |
+| `TURNSTILE_SECRET` | Turnstile Secret Key |
+| `R2_ACCESS_KEY_ID` | 上一步的 Access Key ID |
+| `R2_SECRET_ACCESS_KEY` | 上一步的 Secret Access Key |
 
-**Variables**（Type 选 `Text`）：
+**Variables**（Type 选 Text）：
 
 | 名称 | 值 |
 |---|---|
-| `ADMIN_USERNAME` | 登录用户名，默认 `admin` |
-| `ORIGIN` | 你的访问地址，如 `https://imgflare.xxx.workers.dev` |
-| `TURNSTILE_SITE_KEY` | 见第 6 步 |
+| `ADMIN_USERNAME` | 登录用户名 |
+| `ORIGIN` | `https://imgflare.xxx.workers.dev` |
+| `TURNSTILE_SITE_KEY` | Turnstile Site Key |
+| `R2_ACCOUNT_ID` | Cloudflare Account ID |
+| `R2_BUCKET` | 图片桶名 |
+| `R2_BACKUP_BUCKET` | 备份桶名 |
 
-其余变量（`MAX_UPLOAD_SIZE`、`SESSION_TTL_SECONDS`）已有合理默认值，在 `wrangler.toml` 里，需要时再改。
+`MAX_UPLOAD_SIZE`、`SESSION_TTL_SECONDS` 在 `wrangler.toml` 里，有默认值。
 
-### 6. 创建 Turnstile
+### 5. 创建 Turnstile
 
-**Turnstile** → **Add widget**：
+**Turnstile** → **Add widget**。Domain 填 Worker 域名，Widget Mode 选 `Managed`。Site Key 和 Secret Key 填进上面两张表。
 
-- Domain：填你的 Worker 域名
-- Widget Mode：`Managed`
+### 6. 部署
 
-拿到 Site Key（填进上面的 `TURNSTILE_SITE_KEY`）和 Secret Key（填进 `TURNSTILE_SECRET`）。
+点 **Deploy**。第一次会创建 D1 数据库 `imgflare-db`，并自动执行 [`migrations/init_01.sql`](migrations/init_01.sql)。不用在 D1 控制台里粘贴 SQL。
 
-### 7. 重新部署
-
-改动变量后需要重新部署一次才生效。之后打开 `ORIGIN/login` 即可登录。
+之后打开 `ORIGIN/login`，用 `ADMIN_USERNAME` + `ADMIN_PASSWORD` 登录。
 
 ### 绑定自定义域名（可选）
 
-Worker → **Settings** → **Domains & Routes** → **Add** → **Custom Domain**。
-
-绑定后把 `ORIGIN` 改成新域名并重新部署，图片 URL 才会用新域名生成。
+Worker → **Settings** → **Domains & Routes** → **Add** → **Custom Domain**。改 `ORIGIN` 后重新部署，新的图片 URL 才会用新域名。
 
 ---
 
 ## 二、配置
 
-`wrangler.toml` 里只有四个绑定和几个变量：
+`wrangler.toml` 只绑定 D1。R2 走访问密钥，不写 binding。
 
 ```toml
-name = "imgflare"
-
-[assets]
-directory = "./dist"
-binding = "ASSETS"
-run_worker_first = ["/", "/index.html", "/login", "/i/*", "/api/*"]
-
-[triggers]
-crons = ["0 4 * * *"]
-
-[[r2_buckets]]
-binding = "BUCKET"
-
-[[r2_buckets]]
-binding = "BACKUP_BUCKET"
-
 [[d1_databases]]
 binding = "DB"
+database_name = "imgflare-db"
+migrations_dir = "migrations"
 ```
 
-R2 和 D1 都只写了 `binding`，资源名由 Cloudflare 按 Worker 名自动推导并创建。想用自己的名字就补上 `bucket_name` / `database_name`：
-
-```toml
-[[r2_buckets]]
-binding = "BUCKET"
-bucket_name = "my-images"
-```
-
-`run_worker_first` 让 `/i/*` 走 Worker，这样公开文件也能经过一层响应头处理（见「安全模型」）。
+`run_worker_first` 让 `/i/*` 走 Worker。
 
 ### 日志
-
-`wrangler.toml` 里 Workers Logs 默认关闭：
 
 ```toml
 [observability]
 enabled = false
 ```
 
-代码本身不输出进度日志 —— 备份、登录、上传都靠返回值上报。唯一保留的是 `ApiError::Internal` 的详情，它只写日志、不返回给客户端，排查线上 500 时需要它。
-
-要临时看日志，用 `npx wrangler tail`（不受 `observability` 开关影响）。想在控制台保留事件再把它改成 `true`。
+只有内部错误会写一条日志，不返回给客户端。临时查看用 `bunx wrangler tail`。
 
 ---
 
@@ -214,11 +181,11 @@ curl -i $ORIGIN/
 | `GET` | `/index.html` | Session | 同上 |
 | `GET` | `/login` | 无 | 登录页 |
 
-### 公开文件
+### 公开图片
 
 | 方法 | 路径 | 认证 | 说明 |
 |---|---|---|---|
-| `GET` | `/i/:sha256` | 无 | 原始文件 |
+| `GET` | `/i/:sha256` | 无 | 原图 |
 | `HEAD` | `/i/:sha256` | 无 | 同上，无响应体 |
 
 ### 认证
@@ -245,9 +212,9 @@ curl -X POST $ORIGIN/api/upload \
   -F "file=@photo.png"
 ```
 
-支持扩展名：`png jpg jpeg webp gif avif svg bmp ico txt json xml css js mjs html pdf zip 7z`，以及 `.user.js`。
+只接受图片：`png` `jpg` `jpeg` `webp` `gif` `avif` `bmp` `ico`。扩展名和文件头必须一致，其它类型返回 415。
 
-### 文件
+### 图片
 
 | 方法 | 路径 | 认证 |
 |---|---|---|
@@ -256,7 +223,7 @@ curl -X POST $ORIGIN/api/upload \
 | `DELETE` | `/api/files/:id` | **仅 Session** |
 | `GET` | `/api/stats` | Session |
 
-API Token 不能删除文件。
+API Token 不能删除图片。
 
 ### Token
 
@@ -279,39 +246,11 @@ API Token 不能删除文件。
 
 ## 五、安全模型
 
-单个域名意味着「公开的图片」和「带会话的后台」同源。这是有代价的，项目用三条措施兜住：
+只存图片。扩展名和文件头不一致，或者不是 `png / jpg / webp / gif / avif / bmp / ico`，上传直接 415。
 
-**1. 上传的内容不能当文档执行。**
+`/i/<sha256>` 对这几种类型按原样返回，并带 `X-Content-Type-Options: nosniff`。其它内容类型会以 `application/octet-stream` 加 `Content-Security-Policy: sandbox` 返回。
 
-浏览器打开 `/i/<sha256>` 时的响应类型：
-
-| 类型 | 返回 | 原因 |
-|---|---|---|
-| `image/png` `jpeg` `webp` `gif` `avif` `bmp` `ico` | 原样 | 位图，无法执行 |
-| `image/svg+xml` | 原样 + `sandbox` | 保持类型才能在 Markdown 里显示；`sandbox` 挡掉内嵌脚本 |
-| `application/pdf` | 原样 + `sandbox` | PDF 阅读器可能执行脚本 |
-| `application/javascript` | 原样 + `sandbox` | 顶层导航只会显示源码；保持类型才能让 `.user.js` 被 Tampermonkey 安装 |
-| `text/plain` `text/css` `application/json` | 原样 | 非文档格式 |
-| `text/html` `text/xml` `application/xml` | **`text/plain`** + `sandbox` | 这些一导航就执行 |
-| 其他 | `application/octet-stream` + `sandbox` | 不让浏览器猜 |
-
-关键点是 `text/html` 被降级：上传一个 `<script>` 然后访问它的 URL，脚本不会执行，只会看到源码。
-
-全部响应都带 `X-Content-Type-Options: nosniff`。
-
-**2. CSRF 与请求自身同源比对。**
-
-写操作检查 `Origin` 头是否等于请求实际到达的 host。因为脚本无法在本源执行，攻击页面无法伪造出匹配的 `Origin`。
-
-**3. 面板需要登录才能拿到。**
-
-`/` 在未登录时是 `302 /login`，不会把面板 HTML 发给匿名访问者。图片走 `/i/<sha256>`，完全不经过鉴权。
-
-**4. 面板页面 CSP。**
-
-`default-src 'self'`，只额外放行 Turnstile。上传的文件不可能被加载进面板。
-
-以上规则由 `bun run check:contract` 自动校验——它会解析 `src/public.rs` 的分支表，断言每个脚本可执行类型都已降级或 sandbox，改错会直接让构建失败。
+写操作比对 `Origin` 和请求自己的 host。未登录访问 `/` 会 `302` 到 `/login`。面板 CSP 只放行本站和 Turnstile。
 
 ---
 
@@ -342,21 +281,25 @@ bun run build:userscript
 D1 binding dump() → 校验 SHA-256 → 写 d1/.tmp/... → 覆盖 d1/latest.sql → 删临时对象
 ```
 
-用的是 D1 binding 自带的导出，不需要 Cloudflare API Token，也不需要账户 ID。
+用的是 D1 binding 的 `dump()`，写到 `R2_BACKUP_BUCKET`，凭证就是上面那把访问密钥。
 
-三条规则：
+1. 新备份上传成功后才覆盖 `d1/latest.sql`。失败时旧文件不动。
+2. 桶里只留这一个对象。
+3. 失败重试 3 次。
 
-1. **新备份完全成功才覆盖** `latest.sql`。任一步失败，旧备份原样保留。
-2. **桶里只有 `d1/latest.sql`**，不生成日期目录、不留历史。
-3. 失败自动重试 3 次，间隔递增。
-
-备份对象带 `backup_sha256` / `backup_at` 元数据，后台「设置」页可查看。
+后台「设置」可以下载，也可以看 `backup-sha256` / `backup-at`。
 
 ### 恢复
 
+用同一把访问密钥：
+
 ```bash
-npx wrangler r2 object get imgflare-backup-bucket/d1/latest.sql --file=latest.sql
-npx wrangler d1 execute imgflare-db --remote --file=latest.sql
+AWS_ACCESS_KEY_ID=$R2_ACCESS_KEY_ID \
+AWS_SECRET_ACCESS_KEY=$R2_SECRET_ACCESS_KEY \
+aws s3 cp s3://$R2_BACKUP_BUCKET/d1/latest.sql latest.sql \
+  --endpoint-url https://$R2_ACCOUNT_ID.r2.cloudflarestorage.com
+
+bunx wrangler d1 execute imgflare-db --remote --file=latest.sql
 ```
 
 ### Time Travel
@@ -372,7 +315,7 @@ npx wrangler d1 time-travel restore imgflare-db --timestamp=<ISO8601>
 
 ```bash
 bun run dev:cron
-curl "http://localhost:8787/__scheduled?cron=0+4+*+*+*"
+curl "http://localhost:8787/cdn-cgi/local/scheduled"
 ```
 
 > 本地 `dump()` 会返回 404 —— miniflare 未实现 D1 导出。这条路径需在线上验证。
@@ -386,8 +329,7 @@ curl "http://localhost:8787/__scheduled?cron=0+4+*+*+*"
 ```bash
 bun install
 cp .dev.vars.example .dev.vars
-bun run db:migrate:local
-bun run dev                            # http://localhost:8787
+bun run dev                            # http://localhost:8787，会先执行本地迁移
 ```
 
 常用命令：
@@ -407,23 +349,23 @@ bun run clean            # 清 dist / build / target
 
 **部署后所有接口 500**
 
-`TURNSTILE_SITE_KEY` 还是占位值，或 `ADMIN_PASSWORD` / `SESSION_SECRET` / `TURNSTILE_SECRET` 没配齐。看 Worker 的 Logs。
+`ORIGIN`、`ADMIN_USERNAME`、`TURNSTILE_SITE_KEY`、`ADMIN_PASSWORD`、`SESSION_SECRET`、`TURNSTILE_SECRET` 或 R2 那五项没配齐。
 
 **登录页没有人机验证**
 
-同上，Worker 会拒绝服务并报 `TURNSTILE_SITE_KEY is still the placeholder`。
+`TURNSTILE_SITE_KEY` 还是占位，或没配对 `TURNSTILE_SECRET`。
 
 **改了变量不生效**
 
-Cloudflare 上的变量改动需要重新部署。
+重新部署一次。Deploy command 里的 `--keep-vars` 会保留网页上的变量。
 
 **图片链接指向旧域名**
 
-`ORIGIN` 没更新。改完要重新部署，已有文件的 URL 是按当时的 `ORIGIN` 生成的。
+`ORIGIN` 没更新。改完重新部署。
 
-**上传的 HTML 打开是源代码**
+**非图片上传失败**
 
-设计如此，见「安全模型」。同源部署下这是防止会话被窃取的代价。
+只接受 png、jpg、webp、gif、avif、bmp、ico，而且文件头要和扩展名一致。
 
 **Cron 没跑**
 

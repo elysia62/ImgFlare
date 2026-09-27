@@ -218,15 +218,13 @@ console.log("\n公开文件响应类型");
   }
 
   const cases = [
-    // type stored, expected declared type, whether it must be sandboxed
     ["image/png", "image/png", false],
     ["image/jpeg", "image/jpeg", false],
-    ["image/svg+xml", "image/svg+xml", true],
-    ["application/pdf", "application/pdf", true],
-    ["application/javascript", "application/javascript", true],
-    ["text/html", "text/plain; charset=utf-8", true],
-    ["application/xml", "text/plain; charset=utf-8", true],
-    ["text/plain", "text/plain; charset=utf-8", false],
+    ["image/webp", "image/webp", false],
+    ["image/gif", "image/gif", false],
+    ["image/avif", "image/avif", false],
+    ["image/bmp", "image/bmp", false],
+    ["image/x-icon", "image/x-icon", false],
   ];
 
   let bad = 0;
@@ -253,8 +251,7 @@ console.log("\n公开文件响应类型");
   // Every branch must be sandboxed unless it is a known-inert type.
   const inert = new Set([
     "image/png", "image/jpeg", "image/webp", "image/gif", "image/avif",
-    "image/bmp", "image/x-icon", "text/plain", "text/css", "application/json",
-    "application/zip", "application/x-7z-compressed",
+    "image/bmp", "image/x-icon",
   ]);
   for (const [stored, arm] of arms) {
     if (!inert.has(stored) && arm.kind !== "sandboxed") {
@@ -263,8 +260,20 @@ console.log("\n公开文件响应类型");
     }
   }
 
+  if (!src.includes('_ => sandboxed("application/octet-stream")')) {
+    console.log("  ✗ 未知类型没有降级为 application/octet-stream + sandbox");
+    bad++;
+  }
+
+  const utils = await Bun.file(path.join(ROOT, "src/utils.rs")).text();
+  for (const banned of ["application/pdf", "application/javascript", "text/html", "image/svg", "application/zip", ".user.js"]) {
+    if (utils.includes(banned)) {
+      console.log(`  ✗ utils.rs 仍接受非图片：${banned}`);
+      bad++;
+    }
+  }
   if (bad) violations++;
-  else console.log("  ✓ 所有脚本可执行类型都已降级或 sandbox");
+  else console.log("  ✓ 图片类型按原样返回，其它类型都 sandbox");
 }
 
 console.log();

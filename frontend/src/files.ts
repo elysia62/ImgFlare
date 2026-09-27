@@ -132,7 +132,7 @@ export class FileBrowser {
 
   private renderError(error: unknown): void {
     const message =
-      error instanceof ApiError ? humanizeError(error.code) : '加载文件列表失败';
+      error instanceof ApiError ? humanizeError(error.code) : '加载图片列表失败';
     replace(this.container, [el('p', { class: 'empty-state', text: message })]);
     this.loadMoreButton.hidden = true;
   }
@@ -140,8 +140,8 @@ export class FileBrowser {
   private render(): void {
     if (this.items.length === 0) {
       const message = this.query
-        ? `没有找到匹配「${this.query}」的文件`
-        : '还没有上传任何文件';
+        ? `没有找到匹配「${this.query}」的图片`
+        : '还没有上传任何图片';
       replace(this.container, [el('p', { class: 'empty-state', text: message })]);
       return;
     }
@@ -153,16 +153,12 @@ export class FileBrowser {
   }
 
   private renderCard(file: FileInfo): HTMLElement {
-    const isImage = file.contentType.startsWith('image/');
-
-    const preview = isImage
-      ? el('img', {
-          class: 'file-thumb',
-          src: file.url,
-          alt: file.name,
-          loading: 'lazy',
-        })
-      : el('div', { class: 'file-icon', text: iconFor(file.contentType) });
+    const preview = el('img', {
+      class: 'file-thumb',
+      src: file.url,
+      alt: file.name,
+      loading: 'lazy',
+    });
 
     const meta = el('div', { class: 'file-meta' }, [
       el('div', { class: 'file-name', title: file.name, text: file.name }),
@@ -198,7 +194,7 @@ export class FileBrowser {
 
   private async confirmDelete(file: FileInfo): Promise<void> {
     const ok = window.confirm(
-      `确定删除「${file.name}」吗？\n\n对象会同时从 R2 和数据库中移除。\n重新上传相同文件会生成相同的 URL。`,
+      `确定删除「${file.name}」吗？\n\n图片会同时从 R2 和数据库中移除。\n重新上传相同内容会生成相同的 URL。`,
     );
     if (!ok) return;
 
@@ -236,14 +232,4 @@ function link(label: string, href: string): HTMLAnchorElement {
     rel: 'noopener noreferrer',
     text: label,
   });
-}
-
-/** A glyph for non-image files, chosen by content type. */
-function iconFor(contentType: string): string {
-  if (contentType.startsWith('application/pdf')) return 'PDF';
-  if (contentType.startsWith('application/javascript')) return 'JS';
-  if (contentType.startsWith('text/')) return 'TXT';
-  if (contentType.includes('zip') || contentType.includes('7z')) return 'ZIP';
-  if (contentType.startsWith('application/json')) return 'JSON';
-  return 'FILE';
 }

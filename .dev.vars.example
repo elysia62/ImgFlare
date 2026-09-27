@@ -2,7 +2,7 @@
 #
 # `.dev.vars` is git-ignored. Never commit real values.
 
-# Admin credentials. The username is also set in `wrangler.toml`.
+# Admin credentials.
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=dev-password
 
@@ -12,11 +12,17 @@ SESSION_SECRET=dev-only-session-secret-please-change-me
 
 # Turnstile test keys — always pass, safe for local development.
 # https://developers.cloudflare.com/turnstile/troubleshooting/testing/
-# The site key also overrides the placeholder in `wrangler.toml`, so the widget
-# actually renders locally.
 TURNSTILE_SITE_KEY=1x00000000000000000000AA
 TURNSTILE_SECRET=1x0000000000000000000000000000000AA
 
-# Origin the dev server answers on. Overrides the value in `wrangler.toml`;
-# there is no second domain to configure.
+# Origin the dev server answers on.
 ORIGIN=http://localhost:8787
+
+# R2 S3 API token. Create the buckets and one access key in the dashboard.
+# The same key is what you put into other sync tools.
+# A value that is empty or starts with YOUR_ is treated as unset.
+R2_ACCOUNT_ID=00000000000000000000000000000000
+R2_ACCESS_KEY_ID=replace-with-access-key-id
+R2_SECRET_ACCESS_KEY=replace-with-secret-access-key
+R2_BUCKET=imgflare-images
+R2_BACKUP_BUCKET=imgflare-backups

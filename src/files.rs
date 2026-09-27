@@ -3,9 +3,9 @@
 use crate::config::Config;
 use crate::db::Db;
 use crate::error::{ApiError, ApiResult};
+use crate::r2::R2;
 use crate::upload::{FileInfo, delete_object};
 use serde::{Deserialize, Serialize};
-use worker::Env;
 
 /// Query string accepted by `GET /api/files`.
 #[derive(Deserialize)]
@@ -72,7 +72,7 @@ pub async fn handle_get(db: &Db, cfg: &Config, id: &str) -> ApiResult<FileInfo> 
 /// Admin session only — an API token cannot delete. The R2 object and the D1 row
 /// are removed together; re-uploading the same bytes later recreates the same
 /// key and therefore the same URL.
-pub async fn handle_delete(env: &Env, db: &Db, id: &str) -> ApiResult<()> {
+pub async fn handle_delete(r2: &R2, db: &Db, id: &str) -> ApiResult<()> {
     let record = db
         .find_file_by_id(id)
         .await?
@@ -80,7 +80,7 @@ pub async fn handle_delete(env: &Env, db: &Db, id: &str) -> ApiResult<()> {
 
     // Object first: if this fails we keep the index row so the admin can retry,
     // rather than orphaning bytes in the bucket with no record of them.
-    delete_object(env, &record.r2_key).await?;
+    delete_object(r2, &record.r2_key).await?;
 
     let removed = db.delete_file(id).await?;
     if removed == 0 {

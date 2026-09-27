@@ -1,12 +1,12 @@
-//! Personal Image Host — a minimal, single-administrator image and file host.
+//! Personal Image Host — a single-administrator image host.
 //!
 //! ```text
 //! imgflare.example.com  -> this Rust/Wasm Worker
-//!   ├── GET  /i/<sha256>   public files, no auth
+//!   ├── GET  /i/<sha256>   public images, no auth
 //!   ├── POST /api/login    username + password + Turnstile
 //!   ├── upload, dedup, list, search, delete
 //!   ├── API tokens for the userscript
-//!   └── daily D1 -> SQL -> private R2 backup
+//!   └── daily D1 -> SQL -> R2 backup
 //! ```
 //!
 //! One origin. Public reads need no credentials; everything else does.
@@ -14,9 +14,9 @@
 //! Storage layout:
 //!
 //! ```text
-//! R2 (public)   BUCKET         f/<sha256>
-//! R2 (private)  BACKUP_BUCKET  d1/latest.sql
-//! D1            DB             files, api_tokens, kv_meta
+//! R2 image bucket    i/<sha256>
+//! R2 backup bucket   d1/latest.sql
+//! D1                 files, api_tokens, kv_meta
 //! ```
 
 mod auth;
@@ -27,7 +27,9 @@ mod error;
 mod files;
 mod public;
 mod response;
+mod r2;
 mod router;
+mod s3sign;
 mod tokens;
 mod turnstile;
 mod upload;
@@ -55,7 +57,7 @@ pub async fn main(req: Request, env: Env, ctx: Context) -> Result<Response, work
 
 /// Cron entry point: `0 4 * * *` (04:00 UTC / 12:00 Asia/Taipei).
 ///
-/// This handler does exactly one thing — back D1 up to the private R2 bucket.
+/// This handler does exactly one thing — back D1 up to the backup bucket.
 /// Public file access never touches this path.
 #[event(scheduled)]
 pub async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
