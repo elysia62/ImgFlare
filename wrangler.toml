@@ -3,9 +3,9 @@
 # ---------------------------------------------------------------------------
 # ImgFlare
 #
-# Single origin: this Worker serves the admin panel, the API, and the public
-# files at `/f/<sha256>`. There is no second domain — public reads are
-# unauthenticated, everything else needs a login.
+# Single origin. `/` is the admin panel (redirects to /login when signed out),
+# `/i/<sha256>` serves public files without authentication, and everything else
+# lives under `/api/*` and requires a session or an API token.
 #
 # Deploy via Cloudflare's Git integration: connect the repo, set the build
 # command (see README), and Cloudflare provisions nothing else for you to wire
@@ -20,14 +20,21 @@ compatibility_date = "2026-09-27"
 # Rust/Wasm workers need this flag while the module format settles.
 compatibility_flags = ["nodejs_compat"]
 
-# The frontend is plain static assets. `/f/*`, `/api/*`, `/login` and `/` are
+# Workers Logs is off. Nothing in this project depends on it: the code emits no
+# progress logging, and the single diagnostic (an internal error) is only
+# written so `wrangler tail` / live logs can show it while debugging.
+# Flip `enabled` to true if you want events retained in the dashboard.
+[observability]
+enabled = false
+
+# The frontend is plain static assets. `/i/*`, `/api/*`, `/login` and `/` are
 # handled by the Rust worker (see `run_worker_first`) so that every response
 # carries the right headers.
 [assets]
 directory = "./dist"
 binding = "ASSETS"
 not_found_handling = "none"
-run_worker_first = ["/", "/index.html", "/login", "/f/*", "/api/*"]
+run_worker_first = ["/", "/index.html", "/login", "/i/*", "/api/*"]
 
 # ---------------------------------------------------------------------------
 # Cron: every day at 04:00 UTC

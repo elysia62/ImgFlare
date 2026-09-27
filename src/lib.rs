@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! imgflare.example.com  -> this Rust/Wasm Worker
-//!   ├── GET  /f/<sha256>   public files, no auth
+//!   ├── GET  /i/<sha256>   public files, no auth
 //!   ├── POST /api/login    username + password + Turnstile
 //!   ├── upload, dedup, list, search, delete
 //!   ├── API tokens for the userscript
@@ -59,24 +59,11 @@ pub async fn main(req: Request, env: Env, ctx: Context) -> Result<Response, work
 /// Public file access never touches this path.
 #[event(scheduled)]
 pub async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
-    let cfg = match config::Config::from_env(&env) {
-        Ok(cfg) => cfg,
-        Err(err) => {
-            worker::console_error!("backup aborted: config error: {err}");
-            return;
-        }
-    };
-
-    match backup::run_backup_with_retries(&env, &cfg).await {
-        Ok(report) => {
-            worker::console_log!(
-                "scheduled backup complete: {} bytes, sha256 {}, at {}",
-                report.bytes,
-                report.sha256,
-                report.finished_at
-            );
-        }
-        // Already retried inside; the previous `d1/latest.sql` remains in place.
-        Err(err) => worker::console_error!("scheduled backup failed: {err}"),
+    // The cron handler reports through the return value only — see the note on
+    // logging in `error.rs`.
+    if let Ok(cfg) = config::Config::from_env(&env) {
+        // Already retried inside; on failure the previous `d1/latest.sql` is
+        // left untouched, which is the outcome that matters.
+        let _ = backup::run_backup_with_retries(&env, &cfg).await;
     }
 }

@@ -35,17 +35,25 @@ pub async fn route(req: Request, env: Env, _ctx: worker::Context) -> Result<Resp
 
     match (method, segments.as_slice()) {
         // -- public files --------------------------------------------------
-        // Served without any authentication: image hosts exist to be embedded
-        // in Markdown and HTML. See `crate::public` for how active content is
-        // kept from executing on this origin.
-        (worker::Method::Get | worker::Method::Head, ["f", hash]) => {
+        // `/i/<sha256>` — served without any authentication: image hosts exist
+        // to be embedded in Markdown and HTML. See `crate::public` for how
+        // active content is kept from executing on this origin.
+        (worker::Method::Get | worker::Method::Head, ["i", hash]) => {
             public::handle_get(&req, &env, &cfg, hash).await
         }
 
         // -- pages ---------------------------------------------------------
         (worker::Method::Get, ["login"]) => render_page(&env, &cfg, "/login.html", true).await,
+
+        // The panel is the root page, but only for a signed-in admin. Anyone
+        // else is bounced to the login form before a single byte of the panel
+        // markup is sent.
         (worker::Method::Get, []) | (worker::Method::Get, ["index.html"]) => {
-            render_page(&env, &cfg, "/index.html", false).await
+            if auth::has_valid_session(&env, &req) {
+                render_page(&env, &cfg, "/index.html", false).await
+            } else {
+                Ok(redirect_to("/login"))
+            }
         }
 
         // -- auth ----------------------------------------------------------
@@ -110,6 +118,23 @@ pub async fn route(req: Request, env: Env, _ctx: worker::Context) -> Result<Resp
 // ---------------------------------------------------------------------------
 // Pages
 // ---------------------------------------------------------------------------
+
+/// A `302` to a path on this origin.
+///
+/// `Location` is deliberately relative: the same response is then correct on
+/// `*.workers.dev` and on a custom domain, with no configuration.
+fn redirect_to(path: &str) -> Response {
+    let headers = worker::Headers::new();
+    // `Headers::set` only fails on malformed names/values; both are literals
+    // plus a known-safe path here. A failure would leave us without a Location,
+    // so fall back to a plain 500 rather than an empty redirect loop.
+    if headers.set("Location", path).is_err() || headers.set("Cache-Control", "no-store").is_err()
+    {
+        return Response::error("internal_error", 500)
+            .unwrap_or_else(|_| Response::empty().unwrap());
+    }
+    response::with_headers(302, headers, Vec::new())
+}
 
 /// Serve an HTML page from the static assets binding, with the admin security
 /// headers applied.

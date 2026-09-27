@@ -38,19 +38,12 @@ import {
 const DEFAULT_MAX_SIZE = 50 * 1024 * 1024;
 
 export async function initApp(): Promise<void> {
-  // Gate the whole panel behind a session check.
+  // Access control lives on the server: `/` only serves this page to a signed-in
+  // admin and redirects everyone else. This call is purely for display, so a
+  // failure must not block the panel from rendering.
   const who = await me().catch(() => null);
-  if (!who || !who.authenticated) {
-    window.location.replace('/login');
-    return;
-  }
-  if (!who.admin) {
-    // An API token is not enough to open the panel.
-    window.location.replace('/login');
-    return;
-  }
 
-  byId('whoami').textContent = who.username || 'admin';
+  byId('whoami').textContent = who?.username || 'admin';
   byId('api-base-hint').textContent = window.location.origin;
 
   initTabs();

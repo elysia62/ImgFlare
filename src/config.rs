@@ -54,7 +54,7 @@ impl Config {
 
     /// Public URL for a stored object.
     pub fn public_url(&self, sha256: &str) -> String {
-        format!("{}/f/{}", self.origin, sha256)
+        format!("{}/i/{}", self.origin, sha256)
     }
 }
 

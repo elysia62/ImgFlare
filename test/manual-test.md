@@ -98,7 +98,21 @@ done
 
 ---
 
-## 5. 未登录上传
+## 5. 未登录访问面板
+
+```bash
+curl -i "$ORIGIN/"
+curl -i "$ORIGIN/index.html"
+```
+
+**期望**：两个都返回 `HTTP/1.1 302`，`Location: /login`，`Cache-Control: no-store`，
+**不包含任何面板 HTML**。
+
+登录后再访问：应返回 `200` 且带 `Content-Security-Policy`。
+
+---
+
+## 6. 未登录上传
 
 ```bash
 curl -i -X POST "$ORIGIN/api/upload" -F "file=@test.png"
@@ -108,7 +122,7 @@ curl -i -X POST "$ORIGIN/api/upload" -F "file=@test.png"
 
 ---
 
-## 6. 登录上传
+## 7. 登录上传
 
 用浏览器完成后，在后台拖入一个 PNG。
 
@@ -128,18 +142,18 @@ curl -X POST "$ORIGIN/api/upload" \
 
 ---
 
-## 7. 粘贴图片
+## 8. 粘贴图片
 
 在后台页面按 `Ctrl+V`，剪贴板里先复制一张截图。
 
 **期望**：
 - 文件名为 `pasted-<时间戳>.png`
 - `content_type` 为 `image/png`
-- Markdown 形如 `![pasted-20260927-120000.png](https://<你的域名>/f/...)`
+- Markdown 形如 `![pasted-20260927-120000.png](https://<你的域名>/i/...)`
 
 ---
 
-## 8. 拖拽图片
+## 9. 拖拽图片
 
 把一张图片从文件管理器拖进上传区。
 
@@ -147,7 +161,7 @@ curl -X POST "$ORIGIN/api/upload" \
 
 ---
 
-## 9. 批量上传
+## 10. 批量上传
 
 一次选中 5 个以上文件拖入。
 
@@ -158,7 +172,7 @@ curl -X POST "$ORIGIN/api/upload" \
 
 ---
 
-## 10. 普通文件（PDF）
+## 11. 普通文件（PDF）
 
 上传一个 PDF。
 
@@ -170,23 +184,23 @@ curl -X POST "$ORIGIN/api/upload" \
 
 ---
 
-## 11. `.user.js`
+## 12. `.user.js`
 
 上传 `image-uploader.user.js`。
 
 **期望**：
 - `content_type` = `application/javascript`
-- 可直接用 `$ORIGIN/f/<sha256>` 访问到脚本内容
+- 可直接用 `$ORIGIN/i/<sha256>` 访问到脚本内容
 - Tampermonkey 能从该 URL 安装
 
 ```bash
-curl -sI "$ORIGIN/f/<sha256>" | grep -i content-type
+curl -sI "$ORIGIN/i/<sha256>" | grep -i content-type
 # content-type: application/javascript
 ```
 
 ---
 
-## 12. API Token 上传
+## 13. API Token 上传
 
 后台 → API Token → 生成 → 复制 `cph_...`。
 
@@ -201,7 +215,7 @@ curl -X POST "$ORIGIN/api/upload" \
 
 ---
 
-## 13. ⚠️ Token 不能删除文件
+## 14. ⚠️ Token 不能删除文件
 
 ```bash
 curl -i -X DELETE "$ORIGIN/api/files/<某个id>" -H "X-API-Key: cph_xxx"
@@ -213,7 +227,7 @@ curl -i -X DELETE "$ORIGIN/api/files/<某个id>" -H "X-API-Key: cph_xxx"
 
 ---
 
-## 14. 重复文件
+## 15. 重复文件
 
 同一个文件上传两次。
 
@@ -233,7 +247,7 @@ curl -X POST "$ORIGIN/api/upload/check" \
 
 ---
 
-## 15. 并发重复文件
+## 16. 并发重复文件
 
 复制同一个文件成 `A.png` 和 `B.png`，同时上传：
 
@@ -256,24 +270,24 @@ wait
     --command "SELECT COUNT(*) FROM files WHERE sha256='$SHA'"
   # 1
   ```
-- R2 中只有一个对象 `f/<sha256>`
+- R2 中只有一个对象 `i/<sha256>`
 
 ---
 
-## 16. 删除
+## 17. 删除
 
 后台点某个文件的「删除」并确认。
 
 **期望**：
 - 列表里消失
-- `$ORIGIN/f/<sha256>` 返回 404
+- `$ORIGIN/i/<sha256>` 返回 404
 - D1 记录消失
 
 ⚠️ 再重新上传同一个文件，**URL 应该和之前一样**（因为 key 由内容决定）。
 
 ---
 
-## 17. 搜索
+## 18. 搜索
 
 在后台搜索框输入文件名的一部分。
 
@@ -281,7 +295,7 @@ wait
 
 ---
 
-## 18. 分页
+## 19. 分页
 
 上传 30 个以上文件。
 
@@ -292,11 +306,11 @@ wait
 
 ---
 
-## 19. 公共 URL 免认证
+## 20. 公共 URL 免认证
 
 ```bash
 # 完全不带任何凭据
-curl -i "$ORIGIN/f/<sha256>"
+curl -i "$ORIGIN/i/<sha256>"
 ```
 
 **期望**：`HTTP/1.1 200`，返回文件内容，响应头包含：
@@ -321,7 +335,7 @@ curl -s -X POST "$ORIGIN/api/upload" -b cookies.txt -H "Origin: $ORIGIN" \
   -H "X-File-SHA256: $H" -F "file=@evil.html"
 
 # 声明类型必须是 text/plain，不能是 text/html
-curl -s -D - -o /dev/null "$ORIGIN/f/$H" | grep -i content-type
+curl -s -D - -o /dev/null "$ORIGIN/i/$H" | grep -i content-type
 ```
 
 **期望**：`content-type: text/plain; charset=utf-8` + `content-security-policy: sandbox`。
@@ -332,7 +346,7 @@ curl -s -D - -o /dev/null "$ORIGIN/f/$H" | grep -i content-type
 
 ---
 
-## 20. 超大文件
+## 21. 超大文件
 
 生成一个超过 `MAX_UPLOAD_SIZE`（默认 50 MiB）的文件：
 
@@ -350,7 +364,7 @@ dd if=/dev/urandom of=big.bin bs=1M count=60
 
 ---
 
-## 21. 非法 SHA-256
+## 22. 非法 SHA-256
 
 ```bash
 curl -i -X POST "$ORIGIN/api/upload/check" \
@@ -364,11 +378,11 @@ curl -i -X POST "$ORIGIN/api/upload/check" \
 
 ---
 
-## 22. 路径穿越
+## 23. 路径穿越
 
 ```bash
-curl -i "$ORIGIN/f/../../../etc/passwd"
-curl -i "$ORIGIN/f/..%2f..%2fsecret"
+curl -i "$ORIGIN/i/../../../etc/passwd"
+curl -i "$ORIGIN/i/..%2f..%2fsecret"
 curl -i "$ORIGIN/api/files/..%2f..%2fetc"
 ```
 
@@ -378,7 +392,7 @@ curl -i "$ORIGIN/api/files/..%2f..%2fetc"
 
 ---
 
-## 23. SQL 参数绑定
+## 24. SQL 参数绑定
 
 在后台搜索框输入：
 
@@ -395,7 +409,7 @@ curl -i "$ORIGIN/api/files/..%2f..%2fetc"
 
 ---
 
-## 24. 备份 Cron
+## 25. 备份 Cron
 
 ```bash
 bunx wrangler dev --test-scheduled
@@ -416,7 +430,7 @@ D1 backup uploaded (size=... sha256=... at=...)
 
 ---
 
-## 25. D1 dump
+## 26. D1 dump
 
 `dump()` 走的是 D1 binding 自带的导出，不需要任何 Cloudflare API Token。
 
@@ -429,7 +443,7 @@ D1 backup uploaded (size=... sha256=... at=...)
 
 ---
 
-## 26. `latest.sql`
+## 27. `latest.sql`
 
 ```bash
 bunx wrangler r2 object get imgflare-backup-bucket/d1/latest.sql --file=check.sql
@@ -440,7 +454,7 @@ head -20 check.sql
 
 ---
 
-## 27. ⚠️ 备份失败后旧备份仍在
+## 28. ⚠️ 备份失败后旧备份仍在
 
 这是最关键的一条。
 
@@ -476,7 +490,7 @@ head -20 check.sql
 
 ---
 
-## 28. 新备份成功后更新
+## 29. 新备份成功后更新
 
 1. 上一个文件（让 D1 数据变化）。
 2. 触发备份。
@@ -491,7 +505,7 @@ sha256sum now.sql
 
 ---
 
-## 29. ⚠️ Backup Bucket 无公共访问
+## 30. ⚠️ Backup Bucket 无公共访问
 
 ```bash
 # Bucket 不应有任何 Custom Domain

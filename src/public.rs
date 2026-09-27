@@ -1,4 +1,4 @@
-//! Public file serving: `GET /f/<sha256>`.
+//! Public file serving: `GET /i/<sha256>`.
 //!
 //! Uploaded files are public — no session, no cookie, no token, no Turnstile.
 //! Every other route on this origin requires authentication.
@@ -91,7 +91,7 @@ const fn sandboxed(content_type: &'static str) -> Serving {
     }
 }
 
-/// `GET|HEAD /f/<sha256>`
+/// `GET|HEAD /i/<sha256>`
 pub async fn handle_get(req: &Request, env: &Env, _cfg: &Config, hash: &str) -> ApiResult<Response> {
     let sha256 = normalize_sha256(hash).ok_or(ApiError::NotFound("not_found"))?;
 
@@ -100,7 +100,7 @@ pub async fn handle_get(req: &Request, env: &Env, _cfg: &Config, hash: &str) -> 
         .map_err(|e| ApiError::Internal(format!("R2 binding `BUCKET` unavailable: {e}")))?;
 
     let object = bucket
-        .get(format!("f/{sha256}"))
+        .get(format!("i/{sha256}"))
         .execute()
         .await
         .map_err(|e| ApiError::Internal(format!("R2 get failed: {e}")))?

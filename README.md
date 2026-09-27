@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | 后端 | Rust + workers-rs `0.8.7` → `wasm32-unknown-unknown` |
-| 文件 | R2，内容寻址 `f/<sha256>` |
+| 文件 | R2，内容寻址 `i/<sha256>`，公开路径 `/i/<sha256>` |
 | 元数据 | D1（`files` / `api_tokens` / `kv_meta`） |
 | 登录 | 用户名 + 密码 + Turnstile（服务端校验） |
 | 会话 | 无状态 HMAC-SHA256 签名 Cookie |
@@ -131,7 +131,7 @@ name = "imgflare"
 [assets]
 directory = "./dist"
 binding = "ASSETS"
-run_worker_first = ["/", "/index.html", "/login", "/f/*", "/api/*"]
+run_worker_first = ["/", "/index.html", "/login", "/i/*", "/api/*"]
 
 [triggers]
 crons = ["0 4 * * *"]
@@ -154,7 +154,20 @@ binding = "BUCKET"
 bucket_name = "my-images"
 ```
 
-`run_worker_first` 让 `/f/*` 走 Worker，这样公开文件也能经过一层响应头处理（见「安全模型」）。
+`run_worker_first` 让 `/i/*` 走 Worker，这样公开文件也能经过一层响应头处理（见「安全模型」）。
+
+### 日志
+
+`wrangler.toml` 里 Workers Logs 默认关闭：
+
+```toml
+[observability]
+enabled = false
+```
+
+代码本身不输出进度日志 —— 备份、登录、上传都靠返回值上报。唯一保留的是 `ApiError::Internal` 的详情，它只写日志、不返回给客户端，排查线上 500 时需要它。
+
+要临时看日志，用 `npx wrangler tail`（不受 `observability` 开关影响）。想在控制台保留事件再把它改成 `true`。
 
 ---
 
@@ -182,13 +195,20 @@ curl -i $ORIGIN/
 
 成功有两种形状：多数端点为 `{ "success": true, "data": {...} }`；上传相关端点字段直接在顶层。
 
-### 公开
+### 页面
 
-| 方法 | 路径 | 认证 |
-|---|---|---|
-| `GET` | `/f/:sha256` | 无 |
-| `HEAD` | `/f/:sha256` | 无 |
-| `GET` | `/login` | 无 |
+| 方法 | 路径 | 认证 | 说明 |
+|---|---|---|---|
+| `GET` | `/` | Session | 管理面板。未登录时 `302` 到 `/login` |
+| `GET` | `/index.html` | Session | 同上 |
+| `GET` | `/login` | 无 | 登录页 |
+
+### 公开文件
+
+| 方法 | 路径 | 认证 | 说明 |
+|---|---|---|---|
+| `GET` | `/i/:sha256` | 无 | 原始文件 |
+| `HEAD` | `/i/:sha256` | 无 | 同上，无响应体 |
 
 ### 认证
 
@@ -252,7 +272,7 @@ API Token 不能删除文件。
 
 **1. 上传的内容不能当文档执行。**
 
-浏览器打开 `/f/<sha256>` 时的响应类型：
+浏览器打开 `/i/<sha256>` 时的响应类型：
 
 | 类型 | 返回 | 原因 |
 |---|---|---|
@@ -272,7 +292,11 @@ API Token 不能删除文件。
 
 写操作检查 `Origin` 头是否等于请求实际到达的 host。因为脚本无法在本源执行，攻击页面无法伪造出匹配的 `Origin`。
 
-**3. 面板页面 CSP。**
+**3. 面板需要登录才能拿到。**
+
+`/` 在未登录时是 `302 /login`，不会把面板 HTML 发给匿名访问者。图片走 `/i/<sha256>`，完全不经过鉴权。
+
+**4. 面板页面 CSP。**
 
 `default-src 'self'`，只额外放行 Turnstile。上传的文件不可能被加载进面板。
 

@@ -37,8 +37,6 @@ pub struct BackupReport {
 /// Returns `Ok(report)` only when a verified SQL dump is sitting in the private
 /// bucket under `d1/latest.sql`.
 pub async fn run_backup(env: &Env, _cfg: &Config) -> ApiResult<BackupReport> {
-    worker::console_log!("D1 backup started");
-
     // --- 1. Produce the dump ----------------------------------------------
     let db = Db::from_env(env)?;
     let sql = db
@@ -96,20 +94,15 @@ pub async fn run_backup(env: &Env, _cfg: &Config) -> ApiResult<BackupReport> {
         .map_err(|e| ApiError::Internal(format!("R2 backup promote failed: {e}")))?;
 
     // Clean up the temporary object; `latest.sql` is the only thing that stays.
-    if let Err(e) = bucket.delete(tmp_key).await {
-        worker::console_warn!("failed to remove staging object: {e}");
-    }
+    // A leftover staging object is harmless and gets overwritten next run.
+    let _ = bucket.delete(tmp_key).await;
 
     // Rate-limit counters are only meaningful for a 15-minute window; sweeping
-    // them once a day keeps `kv_meta` from accumulating dead keys.
-    match db.meta_delete_prefix("login_fail:").await {
-        Ok(0) => {}
-        Ok(n) => worker::console_log!("cleared {n} stale login counters"),
-        Err(e) => worker::console_warn!("login counter sweep failed: {e}"),
-    }
+    // them once a day keeps `kv_meta` from accumulating dead keys. Best effort:
+    // a failure here must not fail the backup.
+    let _ = db.meta_delete_prefix("login_fail:").await;
 
     let finished_at = now_ms();
-    worker::console_log!("D1 backup uploaded (size={size} sha256={sha256} at={finished_at})");
 
     Ok(BackupReport {
         bytes: size,
@@ -129,7 +122,6 @@ pub async fn run_backup_with_retries(env: &Env, cfg: &Config) -> ApiResult<Backu
         match run_backup(env, cfg).await {
             Ok(report) => return Ok(report),
             Err(err) => {
-                worker::console_warn!("D1 backup attempt {attempt}/{MAX_ATTEMPTS} failed: {err}");
                 last_err = Some(err);
                 if attempt < MAX_ATTEMPTS {
                     // Back off between attempts.
@@ -139,9 +131,7 @@ pub async fn run_backup_with_retries(env: &Env, cfg: &Config) -> ApiResult<Backu
         }
     }
 
-    let err = last_err.unwrap_or_else(|| ApiError::Internal("backup failed".into()));
-    worker::console_error!("D1 backup failed after {MAX_ATTEMPTS} attempts: {err}");
-    Err(err)
+    Err(last_err.unwrap_or_else(|| ApiError::Internal("backup failed".into())))
 }
 
 /// Metadata describing the current backup, for the admin settings card.

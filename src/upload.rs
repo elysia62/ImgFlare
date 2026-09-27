@@ -2,7 +2,7 @@
 //!
 //! The deduplication contract:
 //!
-//! * The R2 key is `f/<sha256>` — content addressed, so identical bytes always
+//! * The R2 key is `i/<sha256>` — content addressed, so identical bytes always
 //!   map to the same key and therefore the same public URL.
 //! * `/api/upload/check` is a fast path only. `/api/upload` re-checks the hash
 //!   itself, because two clients can race past the check simultaneously.
@@ -63,8 +63,11 @@ pub fn build_markdown(name: &str, content_type: &str, url: &str) -> String {
 }
 
 /// The R2 key for a given content hash.
+///
+/// Matches the public path (`/i/<sha256>`) so a key can be read straight off a
+/// URL, but the two are independent: this is storage layout, that is routing.
 pub fn r2_key_for(sha256: &str) -> String {
-    format!("f/{sha256}")
+    format!("i/{sha256}")
 }
 
 // ---------------------------------------------------------------------------

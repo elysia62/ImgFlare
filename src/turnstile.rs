@@ -63,9 +63,8 @@ pub async fn verify(env: &Env, token: &str, remote_ip: Option<&str>) -> ApiResul
     if parsed.success {
         Ok(())
     } else {
-        // The error codes are useful for the admin, but they can reveal which
-        // widget/secret is misconfigured; log rather than echo to the client.
-        worker::console_warn!("turnstile rejected: {:?}", parsed.error_codes);
+        // The error codes would reveal which widget/secret is misconfigured, so
+        // they are never echoed to the client.
         Err(ApiError::Forbidden("turnstile_failed"))
     }
 }
