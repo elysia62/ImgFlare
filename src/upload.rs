@@ -158,7 +158,7 @@ pub async fn handle_upload(
     if size == 0 {
         return Err(ApiError::BadRequest("empty_file"));
     }
-    if size > cfg.max_upload_size {
+    if size > crate::config::MAX_UPLOAD_SIZE {
         return Err(ApiError::PayloadTooLarge);
     }
 

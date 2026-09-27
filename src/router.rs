@@ -139,9 +139,8 @@ fn redirect_to(path: &str) -> Response {
 /// Serve an HTML page from the static assets binding, with the admin security
 /// headers applied.
 ///
-/// The checked-in HTML carries placeholders for values that only exist at
-/// runtime — the Turnstile site key and the upload size cap — so those live in
-/// one place (`wrangler.toml`) instead of being duplicated into the assets.
+/// The checked-in HTML carries a placeholder for the Turnstile site key, which
+/// only exists at runtime. The upload cap is a code constant.
 async fn render_page(env: &Env, cfg: &Config, asset: &str, is_login: bool) -> ApiResult<Response> {
     let mut response = serve_asset(env, asset).await?;
 
@@ -153,7 +152,10 @@ async fn render_page(env: &Env, cfg: &Config, asset: &str, is_login: bool) -> Ap
     if is_login {
         html = html.replace("YOUR_TURNSTILE_SITE_KEY", &cfg.turnstile_site_key);
     } else {
-        html = html.replace("YOUR_MAX_UPLOAD_SIZE", &cfg.max_upload_size.to_string());
+        html = html.replace(
+            "YOUR_MAX_UPLOAD_SIZE",
+            &crate::config::MAX_UPLOAD_SIZE.to_string(),
+        );
     }
 
     let headers = worker::Headers::new();
@@ -228,11 +230,11 @@ async fn handle_login(mut req: Request, env: &Env, cfg: &Config) -> ApiResult<Re
 
     auth::clear_login_failures(&db, ip.as_deref()).await?;
 
-    let cookie = auth::create_session(env, cfg)?;
+    let cookie = auth::create_session(env)?;
 
     let mut resp = response::ok(serde_json::json!({ "authenticated": true }));
     resp.headers_mut()
-        .set("Set-Cookie", &auth::session_set_cookie(&cookie, cfg))
+        .set("Set-Cookie", &auth::session_set_cookie(&cookie))
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     Ok(resp)

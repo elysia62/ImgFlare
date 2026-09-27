@@ -43,16 +43,18 @@ binding = "DB"
 database_name = "imgflare-db"
 migrations_dir = "migrations"
 
-# Values that differ per install are set in the dashboard
-# (Worker -> Settings -> Variables and Secrets), not here:
-#   ORIGIN, ADMIN_USERNAME, TURNSTILE_SITE_KEY
-#   R2_ACCOUNT_ID, R2_BUCKET
-#   ADMIN_PASSWORD, SESSION_SECRET, TURNSTILE_SECRET
-#   R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY
-[vars]
-# Maximum single upload size in bytes. 52428800 = 50 MiB.
-MAX_UPLOAD_SIZE = "52428800"
-
-# Session lifetime in seconds. 604800 = 7 days.
-SESSION_TTL_SECONDS = "604800"
+# Typed by the operator on Cloudflare's create-project page. No values here.
+[secrets]
+required = [
+  "ADMIN_USERNAME",
+  "ADMIN_PASSWORD",
+  "SESSION_SECRET",
+  "TURNSTILE_SITE_KEY",
+  "TURNSTILE_SECRET",
+  "ORIGIN",
+  "R2_ACCOUNT_ID",
+  "R2_ACCESS_KEY_ID",
+  "R2_SECRET_ACCESS_KEY",
+  "R2_BUCKET",
+]
 

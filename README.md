@@ -76,49 +76,25 @@ bun run build
 
 `bun run deploy` 会执行 `wrangler deploy --keep-vars`，再执行 `wrangler d1 migrations apply DB --remote`。
 
-### 3. 创建 R2 和访问密钥
+### 3. 创建页
 
-R2 不自动创建。
+D1 名字保持 `imgflare-db`，位置 `Automatic`，不要勾读取复制。
 
-1. **R2** → **Create bucket**，只建一个桶。图片放在 `i/`，备份放在 `back/`。
-2. **R2** → **Manage R2 API Tokens** → **Create API token**。权限选 Object Read & Write，范围选这个桶。
-3. 记下 Access Key ID、Secret Access Key、Account ID。同一把密钥填到需要同步的其它工具里。
+`[secrets].required` 里的项由你在这一页填值，仓库里不写：
 
-### 4. 配置变量与密钥
+`ADMIN_USERNAME`、`ADMIN_PASSWORD`、`SESSION_SECRET`、`TURNSTILE_SITE_KEY`、`TURNSTILE_SECRET`、`ORIGIN`、`R2_ACCOUNT_ID`、`R2_ACCESS_KEY_ID`、`R2_SECRET_ACCESS_KEY`、`R2_BUCKET`。
 
-Worker → **Settings** → **Variables and Secrets**。部署命令带了 `--keep-vars`，这里填的值不会被下次部署清掉。
+`MAX_UPLOAD_SIZE` 和 `SESSION_TTL_SECONDS` 不是配置。代码里写死为 50 MB 和 7 天。
 
-**Secrets**：
+R2 桶要自己先建好。不要开公共访问。
 
-| 名称 | 值 |
-|---|---|
-| `ADMIN_PASSWORD` | 管理员密码 |
-| `SESSION_SECRET` | `openssl rand -base64 48` |
-| `TURNSTILE_SECRET` | Turnstile Secret Key |
-| `R2_ACCESS_KEY_ID` | 上一步的 Access Key ID |
-| `R2_SECRET_ACCESS_KEY` | 上一步的 Secret Access Key |
+### 4. 部署
 
-**Variables**（Type 选 Text）：
+点 **Deploy**。第一次会按页上的名字创建 D1 `imgflare-db`，并自动执行 [`migrations/init_01.sql`](migrations/init_01.sql)。不用在 D1 控制台里粘贴 SQL。
 
-| 名称 | 值 |
-|---|---|
-| `ADMIN_USERNAME` | 登录用户名 |
-| `ORIGIN` | `https://imgflare.xxx.workers.dev` |
-| `TURNSTILE_SITE_KEY` | Turnstile Site Key |
-| `R2_ACCOUNT_ID` | Cloudflare Account ID |
-| `R2_BUCKET` | 桶名。图片在 `i/`，备份在 `back/` |
+Turnstile 在 **Turnstile → Add widget** 里创建。Domain 填 Worker 域名，Widget Mode 选 `Managed`。Site Key 和 Secret Key 填进上面那张表。
 
-`MAX_UPLOAD_SIZE`、`SESSION_TTL_SECONDS` 在 `wrangler.toml` 里，有默认值。
-
-### 5. 创建 Turnstile
-
-**Turnstile** → **Add widget**。Domain 填 Worker 域名，Widget Mode 选 `Managed`。Site Key 和 Secret Key 填进上面两张表。
-
-### 6. 部署
-
-点 **Deploy**。第一次会创建 D1 数据库 `imgflare-db`，并自动执行 [`migrations/init_01.sql`](migrations/init_01.sql)。不用在 D1 控制台里粘贴 SQL。
-
-之后打开 `ORIGIN/login`，用 `ADMIN_USERNAME` + `ADMIN_PASSWORD` 登录。
+之后打开 `ORIGIN/login`，用 `ADMIN_USERNAME` + `ADMIN_PASSWORD` 登录。部署命令带了 `--keep-vars`，下次部署不会清掉这一页填的值。
 
 ### 绑定自定义域名（可选）
 
@@ -352,7 +328,7 @@ bun run clean            # 清 dist / build / target
 
 **部署后所有接口 500**
 
-`ORIGIN`、`ADMIN_USERNAME`、`TURNSTILE_SITE_KEY`、`ADMIN_PASSWORD`、`SESSION_SECRET`、`TURNSTILE_SECRET` 或 R2 那五项没配齐。
+`ORIGIN`、登录账号、Turnstile 或 R2 那几项没配齐。创建页上的值要填完整。
 
 **登录页没有人机验证**
 
@@ -376,7 +352,7 @@ Worker → **Settings** → **Trigger Events** 确认 Cron 存在；再看 Logs 
 
 **上传大文件失败**
 
-`MAX_UPLOAD_SIZE` 上限同时受 Worker 请求体限制（免费版 100 MB）。
+单张上限 50 MB，写死在程序里。Worker 请求体还有自己的上限。
 
 ---
 

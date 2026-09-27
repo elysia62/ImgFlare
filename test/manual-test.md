@@ -312,7 +312,7 @@ x-content-type-options: nosniff
 
 ## 21. 超大文件
 
-生成一个超过 `MAX_UPLOAD_SIZE`（默认 50 MiB）的文件：
+生成一个超过 50 MB 的文件：
 
 ```bash
 dd if=/dev/urandom of=big.bin bs=1M count=60

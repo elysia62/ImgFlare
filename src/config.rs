@@ -1,13 +1,17 @@
 //! Configuration read from the Worker environment.
 //!
-//! Defaults that are the same for every install live in `wrangler.toml`.
+//! Defaults that are the same for every install are in code.
 //! Anything specific to one account — origin, Turnstile, admin login, and the
-//! R2 access key — is set in the Cloudflare dashboard and is not in git.
+//! R2 access key — is typed on Cloudflare's create-project page and is not in git.
 
 use crate::error::{ApiError, ApiResult};
 use worker::Env;
 
-/// R2 S3 credentials and the bucket images and backups share.
+/// Single upload cap. 50 MiB. Not a Cloudflare variable.
+pub const MAX_UPLOAD_SIZE: usize = 52_428_800;
+
+/// Session cookie lifetime. 7 days. Not a Cloudflare variable.
+pub const SESSION_TTL_SECONDS: i64 = 604_800;
 #[derive(Clone)]
 pub struct R2Settings {
     pub account_id: String,
@@ -22,9 +26,7 @@ pub struct Config {
     /// Origin this Worker is served from, e.g. `https://imgflare.example.com`.
     /// Public image URLs are built from it.
     pub origin: String,
-    pub max_upload_size: usize,
     pub turnstile_site_key: String,
-    pub session_ttl_seconds: i64,
     pub r2: R2Settings,
 }
 
@@ -40,16 +42,6 @@ impl Config {
             ));
         }
 
-        let max_upload_size = required(env, "MAX_UPLOAD_SIZE")?
-            .parse::<usize>()
-            .map_err(|_| ApiError::Internal("MAX_UPLOAD_SIZE is not a number".into()))?;
-
-        let session_ttl_seconds = env
-            .var("SESSION_TTL_SECONDS")
-            .ok()
-            .and_then(|v| v.to_string().parse::<i64>().ok())
-            .unwrap_or(604_800);
-
         let r2 = R2Settings {
             account_id: required(env, "R2_ACCOUNT_ID")?,
             access_key_id: required(env, "R2_ACCESS_KEY_ID")?,
@@ -59,9 +51,7 @@ impl Config {
 
         Ok(Self {
             origin,
-            max_upload_size,
             turnstile_site_key,
-            session_ttl_seconds,
             r2,
         })
     }

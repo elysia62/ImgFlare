@@ -69,13 +69,13 @@ struct SessionPayload {
 }
 
 /// Issue a fresh session cookie value.
-pub fn create_session(env: &Env, cfg: &Config) -> ApiResult<String> {
+pub fn create_session(env: &Env) -> ApiResult<String> {
     let secret = secret(env, "SESSION_SECRET")?;
     let now = now_ms();
 
     let payload = SessionPayload {
         iat: now,
-        exp: now + cfg.session_ttl_seconds * 1000,
+        exp: now + crate::config::SESSION_TTL_SECONDS * 1000,
         nonce: crate::utils::random_token(24),
     };
 
@@ -119,10 +119,10 @@ pub fn verify_session(env: &Env, cookie_value: &str) -> ApiResult<()> {
 }
 
 /// The `Set-Cookie` header for a new session.
-pub fn session_set_cookie(value: &str, cfg: &Config) -> String {
+pub fn session_set_cookie(value: &str) -> String {
     format!(
         "{SESSION_COOKIE}={value}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age={}",
-        cfg.session_ttl_seconds
+        crate::config::SESSION_TTL_SECONDS
     )
 }
 
