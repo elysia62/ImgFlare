@@ -39,13 +39,6 @@ pub fn json(body: serde_json::Value, status: u16) -> Response {
         .with_status(status)
 }
 
-/// Plain text reply, used for non-API surfaces and health checks.
-pub fn text(body: &str, status: u16) -> Response {
-    Response::ok(body)
-        .unwrap_or_else(|_| Response::error("internal_error", 500).unwrap())
-        .with_status(status)
-}
-
 /// Build a response with explicit headers, for things like file downloads.
 ///
 /// Uses `fixed()` because the body is already fully materialised — a fixed

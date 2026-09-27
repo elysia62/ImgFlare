@@ -193,12 +193,14 @@ pub async fn run_backup(env: &Env, cfg: &Config) -> ApiResult<BackupReport> {
                 break;
             }
             // A terminal-looking status with no URL means we will never succeed.
-            if let Some(status) = job.status {
-                if status != "active" && status != "pending" && status != "running" {
-                    return Err(ApiError::Internal(format!(
-                        "export job ended with status `{status}`"
-                    )));
-                }
+            if let Some(status) = job.status
+                && status != "active"
+                && status != "pending"
+                && status != "running"
+            {
+                return Err(ApiError::Internal(format!(
+                    "export job ended with status `{status}`"
+                )));
             }
         }
     }
@@ -287,6 +289,16 @@ pub async fn run_backup(env: &Env, cfg: &Config) -> ApiResult<BackupReport> {
         worker::console_warn!("failed to remove staging object: {e}");
     }
 
+    // Rate-limit counters are only meaningful for a 15-minute window; sweeping
+    // them once a day keeps `kv_meta` from accumulating dead keys.
+    if let Ok(db) = crate::db::Db::from_env(env) {
+        match db.meta_delete_prefix("login_fail:").await {
+            Ok(0) => {}
+            Ok(n) => worker::console_log!("cleared {n} stale login counters"),
+            Err(e) => worker::console_warn!("login counter sweep failed: {e}"),
+        }
+    }
+
     let finished_at = now_ms();
     worker::console_log!(
         "D1 backup uploaded (size={size} sha256={sha256} at={finished_at})"
@@ -350,7 +362,7 @@ pub async fn read_status(env: &Env) -> ApiResult<BackupStatus> {
             let custom = obj.custom_metadata().unwrap_or_default();
             Ok(BackupStatus {
                 exists: true,
-                size: obj.size() as u64,
+                size: obj.size(),
                 sha256: custom.get("backup_sha256").cloned(),
                 uploaded_at: custom.get("backup_at").and_then(|v| v.parse::<i64>().ok()),
             })
@@ -393,6 +405,7 @@ pub async fn download_latest(env: &Env) -> ApiResult<Vec<u8>> {
 struct Delay;
 
 impl Delay {
+    #[allow(clippy::new_ret_no_self)]
     async fn new(ms: u64) {
         use worker::Delay as WorkerDelay;
         WorkerDelay::from(std::time::Duration::from_millis(ms)).await;

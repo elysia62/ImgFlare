@@ -41,11 +41,15 @@ use worker::{Context, Env, Request, Response, ScheduleContext, ScheduledEvent};
 
 /// HTTP entry point.
 ///
-/// `respond_with_errors` turns a panic or an unhandled error into a 500 rather
-/// than an opaque runtime crash.
-#[event(fetch, respond_with_errors)]
-pub async fn main(req: Request, env: Env, ctx: Context) -> error::ApiResult<Response> {
-    router::route(req, env, ctx).await
+/// The error is converted here rather than by the macro: `ApiError` knows its
+/// own status code and JSON body, and letting it escape would collapse every
+/// failure into a 500 with a plain-text payload.
+#[event(fetch)]
+pub async fn main(req: Request, env: Env, ctx: Context) -> Result<Response, worker::Error> {
+    Ok(match router::route(req, env, ctx).await {
+        Ok(response) => response,
+        Err(err) => err.to_response(),
+    })
 }
 
 /// Cron entry point: `0 4 * * *` (04:00 UTC / 12:00 Asia/Taipei).

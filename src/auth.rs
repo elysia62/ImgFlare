@@ -4,7 +4,7 @@
 //! password recovery — the password lives in the `ADMIN_PASSWORD` secret and
 //! sessions are stateless signed cookies, so nothing auth-related is persisted.
 
-use crate::config::{Config, secret};
+use crate::config::{Config, secret, var};
 use crate::db::Db;
 use crate::error::{ApiError, ApiResult};
 use crate::utils::{
@@ -31,13 +31,22 @@ impl Principal {
 }
 
 // ---------------------------------------------------------------------------
-// Password
+// Credentials
 // ---------------------------------------------------------------------------
 
-/// Constant-time comparison of the submitted password against `ADMIN_PASSWORD`.
-pub fn verify_password(env: &Env, submitted: &str) -> ApiResult<bool> {
-    let expected = secret(env, "ADMIN_PASSWORD")?;
-    Ok(constant_time_eq(submitted.as_bytes(), expected.as_bytes()))
+/// Verify the submitted username and password against `ADMIN_USERNAME` and
+/// `ADMIN_PASSWORD`.
+///
+/// Both comparisons always run, and the results are combined at the end, so the
+/// response time does not reveal which of the two was wrong.
+pub fn verify_credentials(env: &Env, username: &str, password: &str) -> ApiResult<bool> {
+    let expected_user = var(env, "ADMIN_USERNAME")?;
+    let expected_pass = secret(env, "ADMIN_PASSWORD")?;
+
+    let user_ok = constant_time_eq(username.as_bytes(), expected_user.as_bytes());
+    let pass_ok = constant_time_eq(password.as_bytes(), expected_pass.as_bytes());
+
+    Ok(user_ok & pass_ok)
 }
 
 // ---------------------------------------------------------------------------
@@ -212,16 +221,83 @@ pub async fn touch_token_throttled(db: &Db, token_id: &str) -> ApiResult<()> {
     let key = format!("token_touch:{token_id}");
     let now = now_ms();
 
-    if let Some(last) = db.meta_get(&key).await? {
-        if let Ok(last_ms) = last.parse::<i64>() {
-            if now - last_ms < INTERVAL_MS {
-                return Ok(());
-            }
-        }
+    if let Some(last) = db.meta_get(&key).await?
+        && let Ok(last_ms) = last.parse::<i64>()
+        && now - last_ms < INTERVAL_MS
+    {
+        return Ok(());
     }
 
     db.touch_token(token_id).await?;
     db.meta_set(&key, &now.to_string()).await?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Login throttling
+// ---------------------------------------------------------------------------
+
+/// Failed attempts allowed per IP inside [`LOGIN_WINDOW_MS`].
+const LOGIN_MAX_ATTEMPTS: i64 = 8;
+/// Sliding window length.
+const LOGIN_WINDOW_MS: i64 = 15 * 60 * 1000;
+
+/// Counter key for an IP. Unattributable requests share one bucket.
+fn login_key(ip: Option<&str>) -> String {
+    format!("login_fail:{}", ip.unwrap_or("unknown"))
+}
+
+/// Reject the attempt if this IP has already failed too many times.
+pub async fn check_login_allowed(db: &Db, ip: Option<&str>) -> ApiResult<()> {
+    let key = login_key(ip);
+    let Some(raw) = db.meta_get(&key).await? else {
+        return Ok(());
+    };
+
+    // Stored as `<count>:<first_failure_ms>`.
+    let Some((count, since)) = raw.split_once(':') else {
+        return Ok(());
+    };
+    let (Ok(count), Ok(since)) = (count.parse::<i64>(), since.parse::<i64>()) else {
+        return Ok(());
+    };
+
+    // Window elapsed — start over.
+    if now_ms() - since > LOGIN_WINDOW_MS {
+        db.meta_delete(&key).await?;
+        return Ok(());
+    }
+
+    if count >= LOGIN_MAX_ATTEMPTS {
+        return Err(ApiError::TooManyRequests("too_many_attempts"));
+    }
+
+    Ok(())
+}
+
+/// Count one failed attempt, keeping the window's original start time.
+pub async fn record_login_failure(db: &Db, ip: Option<&str>) -> ApiResult<()> {
+    let key = login_key(ip);
+    let now = now_ms();
+
+    let (count, since) = match db.meta_get(&key).await? {
+        Some(raw) => match raw.split_once(':') {
+            Some((c, s)) => match (c.parse::<i64>(), s.parse::<i64>()) {
+                (Ok(c), Ok(s)) if now - s <= LOGIN_WINDOW_MS => (c, s),
+                _ => (0, now),
+            },
+            None => (0, now),
+        },
+        None => (0, now),
+    };
+
+    db.meta_set(&key, &format!("{}:{}", count + 1, since)).await?;
+    Ok(())
+}
+
+/// Reset the counter after a successful login.
+pub async fn clear_login_failures(db: &Db, ip: Option<&str>) -> ApiResult<()> {
+    db.meta_delete(&login_key(ip)).await?;
     Ok(())
 }
 

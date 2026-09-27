@@ -32,6 +32,7 @@ export class FileBrowser {
   private total = 0;
   private query = '';
   private loading = false;
+  private readonly listeners = new Set<() => void>();
 
   constructor(options: {
     list: HTMLElement;
@@ -55,6 +56,22 @@ export class FileBrowser {
         void this.load(true);
       }, 250);
     });
+  }
+
+  /** Notified after every successful render, so the tab badge can update. */
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener);
+    listener();
+    return () => this.listeners.delete(listener);
+  }
+
+  /** How many files match the current search, server-side. */
+  get totalCount(): number {
+    return this.total;
+  }
+
+  private notify(): void {
+    for (const listener of this.listeners) listener();
   }
 
   /** Load a page. `reset` starts over from the first page. */
@@ -82,6 +99,7 @@ export class FileBrowser {
       this.offset = this.items.length;
       this.total = page.total;
       this.render();
+      this.notify();
     } catch (error) {
       this.renderError(error);
     } finally {
@@ -103,6 +121,7 @@ export class FileBrowser {
     this.offset = this.items.length;
     this.render();
     this.updateLoadMore();
+    this.notify();
   }
 
   private updateLoadMore(): void {

@@ -7,7 +7,7 @@
 
 use crate::auth::{self, Principal};
 use crate::backup;
-use crate::config::{Config, secret};
+use crate::config::Config;
 use crate::db::Db;
 use crate::error::{ApiError, ApiResult};
 use crate::files;
@@ -34,8 +34,10 @@ pub async fn route(req: Request, env: Env, _ctx: worker::Context) -> Result<Resp
 
     match (method, segments.as_slice()) {
         // -- pages ---------------------------------------------------------
-        (worker::Method::Get, ["login"]) => render_login(&env, &cfg).await,
-        (worker::Method::Get, []) => render_panel(&env).await,
+        (worker::Method::Get, ["login"]) => render_page(&env, &cfg, "/login.html", true).await,
+        (worker::Method::Get, []) | (worker::Method::Get, ["index.html"]) => {
+            render_page(&env, &cfg, "/index.html", false).await
+        }
 
         // -- auth ----------------------------------------------------------
         (worker::Method::Post, ["api", "login"]) => {
@@ -82,11 +84,6 @@ pub async fn route(req: Request, env: Env, _ctx: worker::Context) -> Result<Resp
         // -- misc ----------------------------------------------------------
         (worker::Method::Get, ["api", "me"]) => handle_me(req, &env).await,
         (worker::Method::Get, ["api", "stats"]) => handle_stats(req, &env).await,
-        // Unauthenticated liveness probe. Deliberately reveals nothing about
-        // configuration — just that the Worker is up.
-        (worker::Method::Get, ["api", "health"]) => {
-            Ok(response::text("ok", 200))
-        }
 
         // Revoking is the safe, reversible action offered by the UI. A hard
         // delete is available at `?purge=1` for cleaning up test tokens.
@@ -105,66 +102,39 @@ pub async fn route(req: Request, env: Env, _ctx: worker::Context) -> Result<Resp
 // Pages
 // ---------------------------------------------------------------------------
 
-/// Serve `login.html` from the static assets binding.
+/// Serve an HTML page from the static assets binding, with the admin security
+/// headers applied.
 ///
-/// The page carries a placeholder for the Turnstile site key; the Worker
-/// substitutes the configured value so the key only ever lives in one place
-/// (`wrangler.toml`) instead of being duplicated into the checked-in HTML.
-async fn render_login(env: &Env, cfg: &Config) -> ApiResult<Response> {
-    let mut response = serve_asset(env, "/login.html").await?;
+/// `login.html` carries a placeholder for the Turnstile site key; the Worker
+/// substitutes the configured value so the key lives only in `wrangler.toml`
+/// instead of being duplicated into the checked-in HTML.
+async fn render_page(env: &Env, cfg: &Config, asset: &str, is_login: bool) -> ApiResult<Response> {
+    let mut response = serve_asset(env, asset).await?;
 
-    if cfg.turnstile_site_key.is_empty() {
-        return Ok(response);
+    let mut html = response
+        .text()
+        .await
+        .map_err(|e| ApiError::Internal(format!("reading {asset} failed: {e}")))?;
+
+    if is_login && !cfg.turnstile_site_key.is_empty() {
+        html = html.replace("YOUR_TURNSTILE_SITE_KEY", &cfg.turnstile_site_key);
     }
 
-    let html = response
-        .text()
-        .await
-        .map_err(|e| ApiError::Internal(format!("reading login asset failed: {e}")))?;
-
-    let patched = html.replace("YOUR_TURNSTILE_SITE_KEY", &cfg.turnstile_site_key);
-
     let headers = worker::Headers::new();
-    headers
-        .set("Content-Type", "text/html; charset=utf-8")
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    headers
-        .set("Content-Security-Policy", response::admin_csp())
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    headers
-        .set("X-Content-Type-Options", "nosniff")
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    headers
-        .set("Referrer-Policy", "same-origin")
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    for (name, value) in [
+        ("Content-Type", "text/html; charset=utf-8"),
+        ("Content-Security-Policy", response::admin_csp()),
+        ("X-Content-Type-Options", "nosniff"),
+        ("Referrer-Policy", "same-origin"),
+        // The panel is per-user and must never be cached by an intermediary.
+        ("Cache-Control", "no-store"),
+    ] {
+        headers
+            .set(name, value)
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
+    }
 
-    response = response::with_headers(200, headers, patched.into_bytes());
-    Ok(response)
-}
-
-/// Serve `index.html`; the client-side script redirects to `/login` if there is
-/// no session. Keeping this a static page means the Worker never renders HTML
-/// from user data.
-async fn render_panel(env: &Env) -> ApiResult<Response> {
-    let mut response = serve_asset(env, "/index.html").await?;
-
-    let headers = worker::Headers::new();
-    headers
-        .set("Content-Security-Policy", response::admin_csp())
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    headers
-        .set("X-Content-Type-Options", "nosniff")
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    headers
-        .set("Referrer-Policy", "same-origin")
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-
-    let body = response
-        .text()
-        .await
-        .map_err(|e| ApiError::Internal(format!("reading panel asset failed: {e}")))?;
-
-    Ok(response::with_headers(200, headers, body.into_bytes()))
+    Ok(response::with_headers(200, headers, html.into_bytes()))
 }
 
 /// Fetch a file straight out of the Static Assets binding.
@@ -189,6 +159,7 @@ async fn serve_asset(env: &Env, path: &str) -> ApiResult<Response> {
 
 #[derive(Deserialize)]
 struct LoginRequest {
+    username: String,
     password: String,
     #[serde(rename = "cf-turnstile-response", alias = "turnstile_token")]
     turnstile_token: String,
@@ -198,19 +169,28 @@ async fn handle_login(mut req: Request, env: &Env, cfg: &Config) -> ApiResult<Re
     // Login is same-origin from the panel, so enforce Origin here too.
     auth::check_origin(&req, cfg)?;
 
+    let ip = client_ip(&req);
+    let db = Db::from_env(env)?;
+
+    // Turnstile is the first gate, but it is not a rate limiter: a bot can solve
+    // it repeatedly. Throttle by client IP before spending a siteverify call.
+    auth::check_login_allowed(&db, ip.as_deref()).await?;
+
     let body: LoginRequest = req
         .json()
         .await
         .map_err(|_| ApiError::BadRequest("invalid_json"))?;
 
-    // Turnstile first: cheap to reject, and it throttles password guessing.
-    turnstile::verify(env, &body.turnstile_token, client_ip(&req).as_deref()).await?;
+    turnstile::verify(env, &body.turnstile_token, ip.as_deref()).await?;
 
-    if !auth::verify_password(env, &body.password)? {
+    if !auth::verify_credentials(env, &body.username, &body.password)? {
+        auth::record_login_failure(&db, ip.as_deref()).await?;
         // Same shape as a Turnstile failure, so the response does not reveal
         // which factor was wrong.
         return Err(ApiError::Unauthorized);
     }
+
+    auth::clear_login_failures(&db, ip.as_deref()).await?;
 
     let cookie = auth::create_session(env, cfg)?;
 
@@ -241,6 +221,11 @@ async fn handle_me(req: Request, env: &Env) -> ApiResult<Response> {
         Ok(principal) => Ok(response::ok(serde_json::json!({
             "authenticated": true,
             "admin": principal.is_admin(),
+            "username": if principal.is_admin() {
+                crate::config::var(env, "ADMIN_USERNAME").unwrap_or_default()
+            } else {
+                String::new()
+            },
             "principal": match principal {
                 Principal::Admin => "admin",
                 Principal::Token { .. } => "token",
@@ -492,10 +477,4 @@ fn client_ip(req: &Request) -> Option<String> {
         .ok()
         .flatten()
         .filter(|s| !s.is_empty())
-}
-
-/// Silence an unused-import warning.
-#[allow(dead_code)]
-fn _assert_secret_available(env: &Env) {
-    let _ = secret(env, "ADMIN_PASSWORD");
 }

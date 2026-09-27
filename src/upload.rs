@@ -261,7 +261,7 @@ pub async fn handle_upload(
 /// protects the stored `original_name` and the rendered UI.
 pub fn sanitize_filename(name: &str) -> String {
     let base = name
-        .rsplit(|c| c == '/' || c == '\\')
+        .rsplit(['/', '\\'])
         .next()
         .unwrap_or(name)
         .trim();

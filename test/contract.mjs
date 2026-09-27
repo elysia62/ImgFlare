@@ -156,10 +156,14 @@ const INVARIANTS = [
     pattern: /format!\(\s*"(?:\s*)(?:SELECT|INSERT|UPDATE|DELETE)/i,
   },
   {
-    name: "前端不把 token/密码写进 localStorage",
+    // localStorage is allowed for UI preferences (theme, active tab). What must
+    // never land there is anything credential-shaped, because it survives
+    // logout and is readable by any script on the origin.
+    name: "前端不把凭证写进 localStorage",
     exts: [".ts"],
     dirs: ["frontend/src"],
-    pattern: /localStorage\.(setItem|getItem)/,
+    pattern:
+      /localStorage\.(setItem|getItem)\s*\(\s*(?:`[^`]*(?:token|password|secret|session)[^`]*`|['"][^'"]*(?:token|password|secret|session)[^'"]*['"])/i,
   },
 ];
 

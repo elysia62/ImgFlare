@@ -21,12 +21,13 @@ compatibility_date = "2026-09-27"
 compatibility_flags = ["nodejs_compat"]
 
 # The frontend is plain static assets served by Cloudflare Workers Static Assets.
-# `/api/*` and `/login` are handled by the Rust worker (see `run_worker_first`).
+# `/`, `/api/*` and `/login` are handled by the Rust worker (see `run_worker_first`)
+# so that every HTML response carries the same security headers.
 [assets]
 directory = "./dist"
 binding = "ASSETS"
 not_found_handling = "none"
-run_worker_first = ["/api/*", "/login"]
+run_worker_first = ["/", "/index.html", "/login", "/api/*"]
 
 # ---------------------------------------------------------------------------
 # Cron: every day at 04:00 UTC (12:00 Asia/Taipei)
@@ -67,7 +68,11 @@ database_id = "YOUR_DATABASE_ID"
 #   wrangler secret put CLOUDFLARE_API_TOKEN
 # ---------------------------------------------------------------------------
 [vars]
+# Admin login name. The password is the secret above; this one is not sensitive.
+ADMIN_USERNAME = "admin"
+
 # Where uploaded files are publicly reachable. Used to build URL + Markdown.
+# MUST be a different origin from PANEL_ORIGIN.
 PUBLIC_BASE_URL = "https://img.example.com"
 
 # The admin origin, used for CSRF Origin checks and CORS decisions.
@@ -86,10 +91,3 @@ TURNSTILE_SITE_KEY = "YOUR_TURNSTILE_SITE_KEY"
 
 # Session lifetime in seconds. Default 7 days.
 SESSION_TTL_SECONDS = "604800"
-
-# ---------------------------------------------------------------------------
-# Local development overrides.
-# ---------------------------------------------------------------------------
-[vars.local]
-PUBLIC_BASE_URL = "http://localhost:8787"
-PANEL_ORIGIN = "http://localhost:8787"

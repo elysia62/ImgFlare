@@ -89,7 +89,7 @@ impl Config {
 }
 
 /// Read a required plain variable.
-fn var(env: &Env, key: &'static str) -> ApiResult<String> {
+pub fn var(env: &Env, key: &'static str) -> ApiResult<String> {
     env.var(key)
         .map(|v| v.to_string())
         .map_err(|_| ApiError::Internal(format!("missing required variable {key}")))

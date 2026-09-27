@@ -75,10 +75,15 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 // Auth
 // ---------------------------------------------------------------------------
 
-export function login(password: string, turnstileToken: string): Promise<void> {
+export function login(
+  username: string,
+  password: string,
+  turnstileToken: string,
+): Promise<void> {
   return request<void>('/api/login', {
     method: 'POST',
     body: JSON.stringify({
+      username,
       password,
       'cf-turnstile-response': turnstileToken,
     }),

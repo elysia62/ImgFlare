@@ -20,14 +20,18 @@ pub fn to_hex(bytes: &[u8]) -> String {
 
 /// Decode a lowercase/uppercase hex string. Returns `None` on any invalid input.
 pub fn from_hex(s: &str) -> Option<Vec<u8>> {
-    if s.len() % 2 != 0 {
+    let bytes = s.as_bytes();
+    // `as_chunks` hands out fixed-size pairs and a remainder; a non-empty
+    // remainder means the input had an odd length.
+    let (pairs, rest) = bytes.as_chunks::<2>();
+    if !rest.is_empty() {
         return None;
     }
-    let bytes = s.as_bytes();
-    let mut out = Vec::with_capacity(s.len() / 2);
-    for chunk in bytes.chunks_exact(2) {
-        let hi = (chunk[0] as char).to_digit(16)?;
-        let lo = (chunk[1] as char).to_digit(16)?;
+
+    let mut out = Vec::with_capacity(pairs.len());
+    for &[hi, lo] in pairs {
+        let hi = (hi as char).to_digit(16)?;
+        let lo = (lo as char).to_digit(16)?;
         out.push(((hi << 4) | lo) as u8);
     }
     Some(out)

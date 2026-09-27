@@ -304,6 +304,29 @@ impl Db {
         stmt.run().await.map_err(ApiError::from)?;
         Ok(())
     }
+
+    pub async fn meta_delete(&self, key: &str) -> ApiResult<()> {
+        let stmt = self
+            .prepare("DELETE FROM kv_meta WHERE key = ?")
+            .bind(&[JsValue::from_str(key)])
+            .map_err(ApiError::from)?;
+        stmt.run().await.map_err(ApiError::from)?;
+        Ok(())
+    }
+
+    /// Delete every scratch key under a prefix. Used to drop stale rate-limit
+    /// counters so `kv_meta` cannot grow without bound.
+    pub async fn meta_delete_prefix(&self, prefix: &str) -> ApiResult<u64> {
+        let stmt = self
+            .prepare("DELETE FROM kv_meta WHERE key LIKE ? ESCAPE '\\'")
+            .bind(&[JsValue::from_str(&format!(
+                "{}%",
+                escape_like(prefix)
+            ))])
+            .map_err(ApiError::from)?;
+        let result = stmt.run().await.map_err(ApiError::from)?;
+        Ok(result.meta()?.and_then(|m| m.changes).unwrap_or(0) as u64)
+    }
 }
 
 /// Escape `%`, `_` and `\` so a user's search text is matched literally.

@@ -71,6 +71,7 @@ export interface FileListResponse {
 export interface MeResponse {
   authenticated: boolean;
   admin: boolean;
+  username?: string;
   principal?: 'admin' | 'token';
 }
 
@@ -125,6 +126,7 @@ export function humanizeError(code: string): string {
     missing_origin: '请求缺少来源信息',
     turnstile_failed: '人机验证失败，请重试',
     turnstile_missing: '请先完成人机验证',
+    too_many_attempts: '尝试次数过多，请稍后再试',
     invalid_sha256: '文件校验值格式不正确',
     invalid_json: '请求格式错误',
     invalid_multipart: '上传数据格式错误',

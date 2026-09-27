@@ -8,8 +8,11 @@
 
 import { initApp } from './app.js';
 import { initLoginPage } from './auth.js';
+import { initTheme } from './theme.js';
 
 async function boot(): Promise<void> {
+  initTheme();
+
   const page = document.body.dataset.page;
 
   if (page === 'login') {

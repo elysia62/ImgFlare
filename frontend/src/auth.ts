@@ -42,6 +42,7 @@ export async function initLoginPage(): Promise<void> {
   }
 
   const form = byId<HTMLFormElement>('login-form');
+  const usernameInput = byId<HTMLInputElement>('username');
   const passwordInput = byId<HTMLInputElement>('password');
   const submitButton = byId<HTMLButtonElement>('login-submit');
   const errorBox = byId('login-error');
@@ -99,9 +100,17 @@ export async function initLoginPage(): Promise<void> {
   });
 
   async function submit(): Promise<void> {
+    const username = usernameInput.value.trim();
     const password = passwordInput.value;
+
+    if (!username) {
+      showError('请输入用户名');
+      usernameInput.focus();
+      return;
+    }
     if (!password) {
       showError('请输入密码');
+      passwordInput.focus();
       return;
     }
     if (!turnstileToken) {
@@ -113,15 +122,20 @@ export async function initLoginPage(): Promise<void> {
     clearError();
 
     try {
-      await login(password, turnstileToken);
+      await login(username, password, turnstileToken);
       window.location.replace('/');
     } catch (error) {
       if (error instanceof ApiError) {
-        showError(
-          error.code === 'turnstile_failed' || error.code === 'turnstile_missing'
-            ? humanizeError(error.code)
-            : '密码或人机验证不正确',
-        );
+        if (error.code === 'too_many_attempts') {
+          showError('尝试次数过多，请 15 分钟后再试');
+        } else if (
+          error.code === 'turnstile_failed' ||
+          error.code === 'turnstile_missing'
+        ) {
+          showError(humanizeError(error.code));
+        } else {
+          showError('用户名或密码不正确');
+        }
       } else {
         showError('登录失败，请重试');
       }
@@ -152,5 +166,5 @@ export async function initLoginPage(): Promise<void> {
     errorBox.hidden = true;
   }
 
-  passwordInput.focus();
+  usernameInput.focus();
 }

@@ -40,12 +40,17 @@
  */
 
 import { spawnSync } from "node:child_process";
+import { statSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 if (typeof Bun === "undefined") {
   throw new Error("This script requires Bun (https://bun.sh). Run: bun run build:worker");
 }
 
-const ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
+// `URL.pathname` percent-encodes non-ASCII characters, which breaks `cwd` for
+// anyone whose checkout path contains them (e.g. `~/文档/project`). `fileURLToPath`
+// decodes back to a real filesystem path.
+const ROOT = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
 
 const log = (msg) => console.log(`[build:worker] ${msg}`);
 
@@ -125,15 +130,33 @@ async function resolveEsbuildNative() {
   return (await Bun.file(bin).exists()) ? bin : null;
 }
 
+/**
+ * Is `wasm32-unknown-unknown` available to rustc?
+ *
+ * Asking rustc directly rather than shelling out to `rustup`: distro-packaged
+ * Rust (Arch, Fedora, Debian) has no `rustup` at all and still ships the target,
+ * so a `rustup`-only check produces a false negative that blocks the build.
+ */
 function rustTargetInstalled() {
-  const r = spawnSync("rustup", ["target", "list", "--installed"], { encoding: "utf8" });
-  return r.status === 0 && /wasm32-unknown-unknown/.test(r.stdout);
+  const r = spawnSync("rustc", ["--print", "target-libdir", "--target", "wasm32-unknown-unknown"], {
+    encoding: "utf8",
+  });
+  if (r.status !== 0) return false;
+  const dir = (r.stdout ?? "").trim();
+  if (!dir) return false;
+  // The libdir only exists once the target's std is actually installed.
+  try {
+    return statSync(dir).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 async function main() {
   if (!rustTargetInstalled()) {
     log("Rust target wasm32-unknown-unknown is missing. Install it with:");
     log("  rustup target add wasm32-unknown-unknown");
+    log("or, with a distro-packaged Rust, install your distro's wasm32 target package.");
     process.exit(1);
   }
 

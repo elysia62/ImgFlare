@@ -50,6 +50,11 @@ export async function initApp(): Promise<void> {
     return;
   }
 
+  byId('whoami').textContent = who.username || 'admin';
+  byId('api-base-hint').textContent = window.location.origin;
+
+  initTabs();
+
   const maxSize = Number(document.body.dataset.maxUploadSize ?? DEFAULT_MAX_SIZE);
   const queue = new UploadQueue(Number.isFinite(maxSize) ? maxSize : DEFAULT_MAX_SIZE);
 
@@ -117,7 +122,12 @@ export async function initApp(): Promise<void> {
   });
 
   // Re-render the queue whenever it changes.
-  queue.subscribe(() => renderQueue(queueList, queue));
+  const queueWrap = byId('queue-wrap');
+  queue.subscribe(() => {
+    queueWrap.hidden = queue.list().length === 0;
+    renderQueue(queueList, queue);
+    renderQueueSummary(queue);
+  });
 
   // -- toolbar --------------------------------------------------------------
 
@@ -130,6 +140,12 @@ export async function initApp(): Promise<void> {
 
   byId('refresh-files').addEventListener('click', () => {
     void browser.refresh();
+  });
+
+  browser.subscribe(() => {
+    const badge = byId('files-count');
+    badge.textContent = String(browser.totalCount);
+    badge.hidden = browser.totalCount === 0;
   });
 
   byId('clear-finished').addEventListener('click', () => {
@@ -191,8 +207,72 @@ export async function initApp(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Tabs
+// ---------------------------------------------------------------------------
+
+const TAB_KEY = 'pih_active_tab';
+
+/** Switch between the four panels, remembering the choice across reloads. */
+function initTabs(): void {
+  const tabs = Array.from(document.querySelectorAll<HTMLButtonElement>('.tab'));
+
+  function activate(name: string, focus = false): void {
+    for (const tab of tabs) {
+      const active = tab.dataset.tab === name;
+      tab.classList.toggle('is-active', active);
+      tab.setAttribute('aria-selected', String(active));
+      if (active && focus) tab.focus();
+    }
+    for (const panel of document.querySelectorAll<HTMLElement>('.panel')) {
+      panel.classList.toggle('is-active', panel.id === `panel-${name}`);
+    }
+    try {
+      window.localStorage.setItem(TAB_KEY, name);
+    } catch {
+      // Private mode — the tab still switches, it just will not be remembered.
+    }
+  }
+
+  for (const tab of tabs) {
+    tab.addEventListener('click', () => activate(tab.dataset.tab ?? 'upload'));
+  }
+
+  // Deep links like `/ #tokens` still work.
+  const fromHash = window.location.hash.replace('#', '');
+  const known = tabs.map((t) => t.dataset.tab);
+  const initial =
+    (known.includes(fromHash) ? fromHash : null) ??
+    (() => {
+      try {
+        return window.localStorage.getItem(TAB_KEY);
+      } catch {
+        return null;
+      }
+    })() ??
+    'upload';
+
+  activate(known.includes(initial) ? initial : 'upload');
+}
+
+// ---------------------------------------------------------------------------
 // Queue rendering
 // ---------------------------------------------------------------------------
+
+/** "3 个上传中 · 2 个失败" — a one-line summary of the queue. */
+function renderQueueSummary(queue: UploadQueue): void {
+  const tasks = queue.list();
+  const failed = tasks.filter((t) => t.state === 'failed').length;
+  const done = tasks.filter(
+    (t) => t.state === 'success' || t.state === 'duplicate',
+  ).length;
+
+  const parts: string[] = [];
+  if (queue.activeCount > 0) parts.push(`${queue.activeCount} 个进行中`);
+  if (done > 0) parts.push(`${done} 个已完成`);
+  if (failed > 0) parts.push(`${failed} 个失败`);
+
+  byId('queue-summary').textContent = parts.join(' · ');
+}
 
 function renderQueue(container: HTMLElement, queue: UploadQueue): void {
   const tasks = queue.list();

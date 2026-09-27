@@ -47,16 +47,16 @@ IMG=https://img.example.com
 curl -i -X POST "$PANEL/api/login" \
   -H 'Content-Type: application/json' \
   -H "Origin: $PANEL" \
-  -d '{"password":"definitely-wrong","cf-turnstile-response":"<有效token>"}'
+  -d '{"username":"admin","password":"definitely-wrong","cf-turnstile-response":"<有效token>"}'
 ```
 
 **期望**：`HTTP/1.1 401`，响应体 `{"success":false,"error":"unauthorized"}`，**没有** `Set-Cookie`。
 
 ---
 
-## 2. 正确密码
+## 2. 正确凭据
 
-用浏览器打开 `$PANEL/login`，完成 Turnstile，输入正确密码并提交。
+用浏览器打开 `$PANEL/login`，完成 Turnstile，输入正确的用户名与密码并提交。
 
 **期望**：
 - 跳转到 `/`
@@ -72,7 +72,7 @@ curl -i -X POST "$PANEL/api/login" \
 curl -i -X POST "$PANEL/api/login" \
   -H 'Content-Type: application/json' \
   -H "Origin: $PANEL" \
-  -d '{"password":"<正确密码>","cf-turnstile-response":"obviously-invalid"}'
+  -d '{"username":"admin","password":"<正确密码>","cf-turnstile-response":"obviously-invalid"}'
 ```
 
 **期望**：`HTTP/1.1 403`，`{"success":false,"error":"turnstile_failed"}`。
@@ -81,7 +81,25 @@ curl -i -X POST "$PANEL/api/login" \
 
 ---
 
-## 4. 未登录上传
+## 4. 登录限流
+
+连续用错误密码请求 8 次以上：
+
+```bash
+for i in $(seq 1 10); do
+  curl -s -o /dev/null -w "$i -> %{http_code}\n" -X POST "$PANEL/api/login" \
+    -H 'Content-Type: application/json' -H "Origin: $PANEL" \
+    -d '{"username":"admin","password":"bad","cf-turnstile-response":"<有效token>"}'
+done
+```
+
+**期望**：前 8 次 `401`，之后 `429` + `{"success":false,"error":"too_many_attempts"}`。
+
+⚠️ 用**正确**密码登录一次后，计数应清零，可立即再次登录。
+
+---
+
+## 5. 未登录上传
 
 ```bash
 curl -i -X POST "$PANEL/api/upload" -F "file=@test.png"
@@ -91,7 +109,7 @@ curl -i -X POST "$PANEL/api/upload" -F "file=@test.png"
 
 ---
 
-## 5. 登录上传
+## 6. 登录上传
 
 用浏览器完成后，在后台拖入一个 PNG。
 
@@ -111,7 +129,7 @@ curl -X POST "$PANEL/api/upload" \
 
 ---
 
-## 6. 粘贴图片
+## 7. 粘贴图片
 
 在后台页面按 `Ctrl+V`，剪贴板里先复制一张截图。
 
@@ -122,7 +140,7 @@ curl -X POST "$PANEL/api/upload" \
 
 ---
 
-## 7. 拖拽图片
+## 8. 拖拽图片
 
 把一张图片从文件管理器拖进上传区。
 
@@ -130,7 +148,7 @@ curl -X POST "$PANEL/api/upload" \
 
 ---
 
-## 8. 批量上传
+## 9. 批量上传
 
 一次选中 5 个以上文件拖入。
 
@@ -141,7 +159,7 @@ curl -X POST "$PANEL/api/upload" \
 
 ---
 
-## 9. 普通文件（PDF）
+## 10. 普通文件（PDF）
 
 上传一个 PDF。
 
@@ -153,7 +171,7 @@ curl -X POST "$PANEL/api/upload" \
 
 ---
 
-## 10. `.user.js`
+## 11. `.user.js`
 
 上传 `image-uploader.user.js`。
 
@@ -169,7 +187,7 @@ curl -sI "$IMG/f/<sha256>" | grep -i content-type
 
 ---
 
-## 11. API Token 上传
+## 12. API Token 上传
 
 后台 → API Token → 生成 → 复制 `cph_...`。
 
@@ -184,7 +202,7 @@ curl -X POST "$PANEL/api/upload" \
 
 ---
 
-## 12. ⚠️ Token 不能删除文件
+## 13. ⚠️ Token 不能删除文件
 
 ```bash
 curl -i -X DELETE "$PANEL/api/files/<某个id>" -H "X-API-Key: cph_xxx"
@@ -196,7 +214,7 @@ curl -i -X DELETE "$PANEL/api/files/<某个id>" -H "X-API-Key: cph_xxx"
 
 ---
 
-## 13. 重复文件
+## 14. 重复文件
 
 同一个文件上传两次。
 
@@ -216,7 +234,7 @@ curl -X POST "$PANEL/api/upload/check" \
 
 ---
 
-## 14. 并发重复文件
+## 15. 并发重复文件
 
 复制同一个文件成 `A.png` 和 `B.png`，同时上传：
 
@@ -243,7 +261,7 @@ wait
 
 ---
 
-## 15. 删除
+## 16. 删除
 
 后台点某个文件的「删除」并确认。
 
@@ -256,7 +274,7 @@ wait
 
 ---
 
-## 16. 搜索
+## 17. 搜索
 
 在后台搜索框输入文件名的一部分。
 
@@ -264,7 +282,7 @@ wait
 
 ---
 
-## 17. 分页
+## 18. 分页
 
 上传 30 个以上文件。
 
@@ -275,7 +293,7 @@ wait
 
 ---
 
-## 18. 公共 URL 免认证
+## 19. 公共 URL 免认证
 
 ```bash
 # 完全不带任何凭据
@@ -294,7 +312,7 @@ cache-control: public, max-age=31536000, immutable
 
 ---
 
-## 19. 超大文件
+## 20. 超大文件
 
 生成一个超过 `MAX_UPLOAD_SIZE`（默认 50 MiB）的文件：
 
@@ -312,7 +330,7 @@ dd if=/dev/urandom of=big.bin bs=1M count=60
 
 ---
 
-## 20. 非法 SHA-256
+## 21. 非法 SHA-256
 
 ```bash
 curl -i -X POST "$PANEL/api/upload/check" \
@@ -326,7 +344,7 @@ curl -i -X POST "$PANEL/api/upload/check" \
 
 ---
 
-## 21. 路径穿越
+## 22. 路径穿越
 
 ```bash
 curl -i "$IMG/f/../../../etc/passwd"
@@ -340,7 +358,7 @@ curl -i "$PANEL/api/files/..%2f..%2fetc"
 
 ---
 
-## 22. SQL 参数绑定
+## 23. SQL 参数绑定
 
 在后台搜索框输入：
 
@@ -357,7 +375,7 @@ curl -i "$PANEL/api/files/..%2f..%2fetc"
 
 ---
 
-## 23. 备份 Cron
+## 24. 备份 Cron
 
 ```bash
 bunx wrangler dev --test-scheduled
@@ -378,7 +396,7 @@ D1 backup uploaded (size=... sha256=... at=...)
 
 ---
 
-## 24. D1 Export
+## 25. D1 Export
 
 观察日志中是否成功创建导出任务并轮询到 `ready`。
 
@@ -391,7 +409,7 @@ D1 backup uploaded (size=... sha256=... at=...)
 
 ---
 
-## 25. `latest.sql`
+## 26. `latest.sql`
 
 ```bash
 bunx wrangler r2 object get personal-image-host-backup/d1/latest.sql --file=check.sql
@@ -402,7 +420,7 @@ head -20 check.sql
 
 ---
 
-## 26. ⚠️ 备份失败后旧备份仍在
+## 27. ⚠️ 备份失败后旧备份仍在
 
 这是最关键的一条。
 
@@ -436,7 +454,7 @@ head -20 check.sql
 
 ---
 
-## 27. 新备份成功后更新
+## 28. 新备份成功后更新
 
 1. 上一个文件（让 D1 数据变化）。
 2. 触发备份。
@@ -451,7 +469,7 @@ sha256sum now.sql
 
 ---
 
-## 28. ⚠️ Backup Bucket 无公共访问
+## 29. ⚠️ Backup Bucket 无公共访问
 
 ```bash
 # Bucket 不应有任何 Custom Domain
