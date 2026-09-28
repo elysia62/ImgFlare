@@ -14,9 +14,6 @@ const SITEVERIFY: &str = "https://challenges.cloudflare.com/turnstile/v0/sitever
 #[derive(Deserialize)]
 struct SiteVerifyResponse {
     success: bool,
-    #[serde(default)]
-    #[allow(dead_code)]
-    error_codes: Vec<String>,
 }
 
 /// Verify a Turnstile token.

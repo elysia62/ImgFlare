@@ -1,9 +1,4 @@
-//! Request routing.
-//!
-//! Hand-written dispatch rather than a router macro: the surface is small enough
-//! that an explicit match is easier to read, and it keeps the generated Wasm
-//! lean. Static assets are served by Cloudflare's Static Assets layer; the Worker
-//! only ever sees `/api/*` and `/login`.
+//! HTTP routes for the panel, public images and API.
 
 use crate::auth::{self, Principal};
 use crate::backup;
@@ -35,11 +30,11 @@ pub async fn route(req: Request, env: Env, _ctx: worker::Context) -> Result<Resp
 
     match (method, segments.as_slice()) {
         // -- public files --------------------------------------------------
-        // `/i/<sha256>` — served without any authentication: image hosts exist
+        // `/i/<id>.<ext>` — served without any authentication: image hosts exist
         // to be embedded in Markdown and HTML. See `crate::public` for how
         // active content is kept from executing on this origin.
-        (worker::Method::Get | worker::Method::Head, ["i", hash]) => {
-            public::handle_get(&req, &crate::r2::R2::new(&cfg.r2), hash).await
+        (worker::Method::Get | worker::Method::Head, ["i", name]) => {
+            public::handle_get(&req, &crate::r2::R2::new(&cfg.r2), name).await
         }
 
         // -- pages ---------------------------------------------------------
@@ -58,13 +53,13 @@ pub async fn route(req: Request, env: Env, _ctx: worker::Context) -> Result<Resp
 
         // -- auth ----------------------------------------------------------
         (worker::Method::Post, ["api", "login"]) => {
-            handle_login(req, &env, &cfg).await
+            handle_login(req, &env).await
         }
-        (worker::Method::Post, ["api", "logout"]) => handle_logout(req, &cfg),
+        (worker::Method::Post, ["api", "logout"]) => handle_logout(req),
 
         // -- upload --------------------------------------------------------
         (worker::Method::Post, ["api", "upload", "check"]) => {
-            handle_upload_check(req, &env, &cfg).await
+            handle_upload_check(req, &env).await
         }
         (worker::Method::Post, ["api", "upload"]) => {
             handle_upload(req, &env, &cfg).await
@@ -108,9 +103,7 @@ pub async fn route(req: Request, env: Env, _ctx: worker::Context) -> Result<Resp
     }
 }
 
-// ---------------------------------------------------------------------------
 // Pages
-// ---------------------------------------------------------------------------
 
 fn current_origin(req: &Request) -> ApiResult<String> {
     auth::request_origin(req).ok_or(ApiError::Forbidden("bad_origin"))
@@ -188,21 +181,19 @@ async fn serve_asset(env: &Env, path: &str) -> ApiResult<Response> {
         .map_err(|e| ApiError::Internal(format!("asset fetch failed: {e}")))
 }
 
-// ---------------------------------------------------------------------------
 // Auth handlers
-// ---------------------------------------------------------------------------
 
 #[derive(Deserialize)]
 struct LoginRequest {
     username: String,
     password: String,
-    #[serde(rename = "cf-turnstile-response", alias = "turnstile_token")]
+    #[serde(rename = "cf-turnstile-response")]
     turnstile_token: String,
 }
 
-async fn handle_login(mut req: Request, env: &Env, cfg: &Config) -> ApiResult<Response> {
+async fn handle_login(mut req: Request, env: &Env) -> ApiResult<Response> {
     // Login is same-origin from the panel, so enforce Origin here too.
-    auth::check_origin(&req, cfg)?;
+    auth::check_origin(&req)?;
 
     let ip = client_ip(&req);
     let db = Db::from_env(env)?;
@@ -237,8 +228,8 @@ async fn handle_login(mut req: Request, env: &Env, cfg: &Config) -> ApiResult<Re
     Ok(resp)
 }
 
-fn handle_logout(req: Request, cfg: &Config) -> ApiResult<Response> {
-    auth::check_origin(&req, cfg)?;
+fn handle_logout(req: Request) -> ApiResult<Response> {
+    auth::check_origin(&req)?;
 
     let mut resp = response::ok(serde_json::json!({ "authenticated": false }));
     resp.headers_mut()
@@ -273,11 +264,9 @@ async fn handle_me(req: Request, env: &Env) -> ApiResult<Response> {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Upload handlers
-// ---------------------------------------------------------------------------
 
-async fn handle_upload_check(mut req: Request, env: &Env, cfg: &Config) -> ApiResult<Response> {
+async fn handle_upload_check(mut req: Request, env: &Env) -> ApiResult<Response> {
     let db = Db::from_env(env)?;
 
     // Both a session and a token may call check — the userscript uses a token.
@@ -285,7 +274,7 @@ async fn handle_upload_check(mut req: Request, env: &Env, cfg: &Config) -> ApiRe
 
     // CSRF applies only to cookie-authenticated callers.
     if principal.is_admin() {
-        auth::check_origin(&req, cfg)?;
+        auth::check_origin(&req)?;
     }
 
     let body: upload::CheckRequest = req
@@ -311,7 +300,7 @@ async fn handle_upload(mut req: Request, env: &Env, cfg: &Config) -> ApiResult<R
     let principal = auth::authenticate(&req, env, &db).await?;
 
     if principal.is_admin() {
-        auth::check_origin(&req, cfg)?;
+        auth::check_origin(&req)?;
     }
 
     if !upload::is_multipart(&req) {
@@ -338,9 +327,7 @@ async fn handle_upload(mut req: Request, env: &Env, cfg: &Config) -> ApiResult<R
     })))
 }
 
-// ---------------------------------------------------------------------------
 // File handlers
-// ---------------------------------------------------------------------------
 
 async fn handle_list_files(req: Request, env: &Env) -> ApiResult<Response> {
     let db = Db::from_env(env)?;
@@ -350,7 +337,6 @@ async fn handle_list_files(req: Request, env: &Env) -> ApiResult<Response> {
         q: None,
         limit: None,
         offset: None,
-        page: None,
     });
     let result = files::handle_list(&db, &current_origin(&req)?, query).await?;
     Ok(response::ok(result))
@@ -378,15 +364,13 @@ async fn handle_delete_file(
 
     // Deletion is admin-only: an API token cannot destroy data.
     auth::require_admin(&req, env, &db).await?;
-    auth::check_origin(&req, cfg)?;
+    auth::check_origin(&req)?;
 
     files::handle_delete(&crate::r2::R2::new(&cfg.r2), &db, id).await?;
     Ok(response::no_content())
 }
 
-// ---------------------------------------------------------------------------
 // Token handlers
-// ---------------------------------------------------------------------------
 
 async fn handle_list_tokens(req: Request, env: &Env) -> ApiResult<Response> {
     let db = Db::from_env(env)?;
@@ -400,8 +384,7 @@ async fn handle_create_token(mut req: Request, env: &Env) -> ApiResult<Response>
     let db = Db::from_env(env)?;
     auth::require_admin(&req, env, &db).await?;
 
-    let cfg = Config::from_env(env)?;
-    auth::check_origin(&req, &cfg)?;
+    auth::check_origin(&req)?;
 
     let body: tokens::CreateTokenRequest = req
         .json()
@@ -416,16 +399,13 @@ async fn handle_delete_token(req: Request, env: &Env, id: &str) -> ApiResult<Res
     let db = Db::from_env(env)?;
     auth::require_admin(&req, env, &db).await?;
 
-    let cfg = Config::from_env(env)?;
-    auth::check_origin(&req, &cfg)?;
+    auth::check_origin(&req)?;
 
     tokens::handle_revoke(&db, id).await?;
     Ok(response::no_content())
 }
 
-// ---------------------------------------------------------------------------
 // Backup handlers
-// ---------------------------------------------------------------------------
 
 async fn handle_download_backup(req: Request, env: &Env, cfg: &Config) -> ApiResult<Response> {
     let db = Db::from_env(env)?;
@@ -471,7 +451,7 @@ async fn handle_backup_status(req: Request, env: &Env, cfg: &Config) -> ApiResul
 async fn handle_run_backup(req: Request, env: &Env, cfg: &Config) -> ApiResult<Response> {
     let db = Db::from_env(env)?;
     auth::require_admin(&req, env, &db).await?;
-    auth::check_origin(&req, cfg)?;
+    auth::check_origin(&req)?;
 
     let report = backup::run_backup_with_retries(env, cfg).await?;
     Ok(response::ok(serde_json::json!({
@@ -481,9 +461,7 @@ async fn handle_run_backup(req: Request, env: &Env, cfg: &Config) -> ApiResult<R
     })))
 }
 
-// ---------------------------------------------------------------------------
 // Helpers
-// ---------------------------------------------------------------------------
 
 /// Best-effort client IP from Cloudflare's connecting-IP header.
 fn client_ip(req: &Request) -> Option<String> {

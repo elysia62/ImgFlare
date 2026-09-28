@@ -6,6 +6,6 @@
 // @author       you
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
-// @connect      YOUR-WORKER-HOST
+// @connect      *
 // @run-at       document-idle
 // ==/UserScript==

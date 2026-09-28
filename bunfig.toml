@@ -1,20 +1,5 @@
-# Bun configuration — https://bun.sh/docs/runtime/bunfig
-#
-# This project is Bun-first. There is deliberately no Node/npm/pnpm config
-# here: mixing package managers produces divergent lockfiles and phantom
-# dependencies.
-
 [install]
-# registry.npmjs.org is unreachable from some networks (corporate proxies,
-# mainland China, air-gapped CI). npmmirror is a drop-in replacement and is
-# usually faster from that region.
-registry = "https://registry.npmmirror.com"
-
-# Pin every dependency to the exact resolved version so one machine's build
-# reproduces byte-for-byte on another.
 exact = true
 
 [install.cache]
-# Keep the download cache out of node_modules, so wiping node_modules does not
-# throw away everything Bun already downloaded.
 dir = ".bun-cache"

@@ -1,10 +1,4 @@
-/**
- * Thin API client.
- *
- * Everything is same-origin and cookie-authenticated, so `credentials:
- * "same-origin"` is all that is needed — there is no CORS handling anywhere on
- * the server, by design.
- */
+/** Same-origin API client for the authenticated panel. */
 
 import type {
   ApiResponse,
@@ -12,7 +6,6 @@ import type {
   BackupStatus,
   CreatedToken,
   DuplicateCheckResult,
-  FileInfo,
   FileListResponse,
   MeResponse,
   UploadResult,
@@ -30,10 +23,6 @@ export class ApiError extends Error {
     this.status = status;
   }
 
-  /** The session is gone — the caller should bounce to the login page. */
-  get isUnauthorized(): boolean {
-    return this.status === 401;
-  }
 }
 
 /** Perform a request and unwrap the `{ success, data }` envelope. */
@@ -70,9 +59,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return (payload?.data ?? (payload as unknown)) as T;
 }
 
-// ---------------------------------------------------------------------------
 // Auth
-// ---------------------------------------------------------------------------
 
 export function login(
   username: string,
@@ -97,28 +84,18 @@ export function me(): Promise<MeResponse> {
   return request<MeResponse>('/api/me');
 }
 
-// ---------------------------------------------------------------------------
 // Upload
-// ---------------------------------------------------------------------------
 
 export function checkDuplicate(
   sha256: string,
-  size: number,
 ): Promise<DuplicateCheckResult> {
   return request<DuplicateCheckResult>('/api/upload/check', {
     method: 'POST',
-    body: JSON.stringify({ sha256, size }),
+    body: JSON.stringify({ sha256 }),
   });
 }
 
-/**
- * Upload a single file.
- *
- * The hash travels in `X-File-SHA256` so the worker can enforce it as an R2
- * checksum. `X-File-Name` carries the original name; the multipart filename is
- * set to the same value but browsers mangle non-ASCII names, so the header is
- * the reliable copy.
- */
+/** Multipart upload with progress reporting. */
 export async function uploadFile(
   file: File,
   sha256: string,
@@ -171,9 +148,7 @@ export async function uploadFile(
   });
 }
 
-// ---------------------------------------------------------------------------
 // Files
-// ---------------------------------------------------------------------------
 
 export function listFiles(options: {
   q?: string;
@@ -189,19 +164,13 @@ export function listFiles(options: {
   return request<FileListResponse>(`/api/files${query ? `?${query}` : ''}`);
 }
 
-export function getFile(id: string): Promise<FileInfo> {
-  return request<FileInfo>(`/api/files/${encodeURIComponent(id)}`);
-}
-
 export function deleteFile(id: string): Promise<void> {
   return request<void>(`/api/files/${encodeURIComponent(id)}`, {
     method: 'DELETE',
   });
 }
 
-// ---------------------------------------------------------------------------
 // Tokens
-// ---------------------------------------------------------------------------
 
 export function listTokens(): Promise<ApiToken[]> {
   return request<ApiToken[]>('/api/tokens');
@@ -220,9 +189,7 @@ export function revokeToken(id: string): Promise<void> {
   });
 }
 
-// ---------------------------------------------------------------------------
 // Backup
-// ---------------------------------------------------------------------------
 
 export function backupStatus(): Promise<BackupStatus> {
   return request<BackupStatus>('/api/backup/status');

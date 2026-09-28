@@ -1,10 +1,4 @@
-/**
- * Entry point.
- *
- * Both pages load the same bundle; this decides which controller to start based
- * on a marker attribute on `<body>`. That keeps the build to a single file while
- * still letting each page pull in only the code it needs at runtime.
- */
+/** Start the controller selected by the HTML page. */
 
 import { initApp } from './app.js';
 import { initLoginPage } from './auth.js';
@@ -25,13 +19,6 @@ async function boot(): Promise<void> {
     return;
   }
 
-  // Fallback for a page that forgot to declare itself: pick by the presence of
-  // the login form, which is a reliable signal.
-  if (document.getElementById('login-form')) {
-    await initLoginPage();
-  } else {
-    await initApp();
-  }
 }
 
 void boot().catch((error: unknown) => {

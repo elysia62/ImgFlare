@@ -9,15 +9,12 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body data-page="panel" data-max-upload-size="YOUR_MAX_UPLOAD_SIZE">
-    <!-- 整合式现代导航顶栏 -->
     <header class="topbar">
       <div class="topbar-inner">
         <div class="topbar-left">
           <span class="brand-mark" aria-hidden="true">IF</span>
           <strong class="brand">ImgFlare</strong>
         </div>
-
-        <!-- 导航直接嵌入顶栏（类似 NodeImage 风格） -->
         <nav class="tabs" role="tablist" aria-label="主功能切换">
           <button
             id="tab-upload"
@@ -82,9 +79,6 @@
     </header>
 
     <main class="layout">
-      <!-- ------------------------------------------------------------------ -->
-      <!-- Upload                                                             -->
-      <!-- ------------------------------------------------------------------ -->
       <section
         class="panel is-active"
         id="panel-upload"
@@ -136,10 +130,6 @@
           <div id="queue" class="queue" aria-live="polite"></div>
         </div>
       </section>
-
-      <!-- ------------------------------------------------------------------ -->
-      <!-- Files                                                              -->
-      <!-- ------------------------------------------------------------------ -->
       <section
         class="panel"
         id="panel-files"
@@ -168,10 +158,6 @@
           加载更多
         </button>
       </section>
-
-      <!-- ------------------------------------------------------------------ -->
-      <!-- API tokens                                                         -->
-      <!-- ------------------------------------------------------------------ -->
       <section
         class="panel"
         id="panel-tokens"
@@ -200,10 +186,6 @@
         <div id="new-token" class="new-token" hidden></div>
         <div id="token-list" class="token-list"></div>
       </section>
-
-      <!-- ------------------------------------------------------------------ -->
-      <!-- Settings / backup                                                  -->
-      <!-- ------------------------------------------------------------------ -->
       <section
         class="panel"
         id="panel-settings"
@@ -244,8 +226,6 @@
         </div>
       </section>
     </main>
-
-    <!-- 全屏大图预览弹窗。打开与关闭都在 files.ts 里绑定，页面不写内联事件。 -->
     <dialog id="preview-dialog" class="preview-dialog" aria-label="大图预览">
       <img id="preview-dialog-img" src="" alt="" />
     </dialog>

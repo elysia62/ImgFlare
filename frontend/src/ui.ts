@@ -1,11 +1,4 @@
-/**
- * DOM construction helpers.
- *
- * Everything here builds nodes with `document.createElement` and assigns text
- * through `textContent`. No user-controlled string is ever passed to
- * `innerHTML`, which is the front-end half of the XSS defence (the other half is
- * that uploads with active content are served from a different origin).
- */
+/** DOM helpers using textContent for user-provided text. */
 
 type Attrs = Record<string, string | number | boolean | undefined>;
 
@@ -80,11 +73,6 @@ export function formatUtc(ms: number | null | undefined): string {
   const date = new Date(ms);
   if (Number.isNaN(date.getTime())) return '—';
   return `${date.toISOString().replace('T', ' ').slice(0, 16)} UTC`;
-}
-
-/** A short, copy-friendly form of a hash or id. */
-export function shortHash(sha256: string, length = 12): string {
-  return sha256.slice(0, length);
 }
 
 /**

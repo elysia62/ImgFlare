@@ -12,7 +12,7 @@ import { loadConfig } from '../scripts/deploy.mjs';
 
 // Miniflare is provided by the project's pinned Wrangler dependency.
 const requireWrangler = createRequire(import.meta.resolve('wrangler/package.json'));
-const { Miniflare, Response, FormData, Log, LogLevel, convertV4MiniflareOptions } = requireWrangler('miniflare');
+const { Miniflare, Response, FormData, Log, LogLevel } = requireWrangler('miniflare');
 const root = fileURLToPath(new URL('..', import.meta.url));
 const state = await mkdtemp(join(tmpdir(), 'imgflare-test-'));
 const origin = 'https://imgflare.test';
@@ -31,29 +31,15 @@ const bindings = {
   R2_BUCKET: 'imgflare-test',
 };
 
-const options = {
-  name: 'imgflare-test',
-  compatibilityDate: '2026-09-27',
-  compatibilityFlags: ['nodejs_compat'],
-  modules: [
-    { type: 'ESModule', path: resolve(root, 'build/worker/shim.mjs') },
-    { type: 'CompiledWasm', path: resolve(root, 'build/worker/index_bg.wasm') },
-  ],
+const manifest = {
+  mainModule: 'shim.mjs',
   modulesRoot: resolve(root, 'build/worker'),
-  bindings,
-  d1Databases: { DB: 'source', RESTORE: 'restore' },
-  d1Persist: state,
-  log: new Log(LogLevel.NONE),
-  serviceBindings: {
-    ASSETS: async (request) => {
-      const name = new URL(request.url).pathname;
-      assert.ok(['/index.html', '/login.html'].includes(name));
-      return new Response(await readFile(resolve(root, 'frontend' + name)), {
-        headers: { 'Content-Type': 'text/html' },
-      });
-    },
+  modules: {
+    'shim.mjs': { type: 'esm', contents: await readFile(resolve(root, 'build/worker/shim.mjs'), 'utf8') },
+    'index_bg.wasm': { type: 'wasm', contents: await readFile(resolve(root, 'build/worker/index_bg.wasm')) },
   },
-  outboundService: async (request) => {
+};
+const outbound = async (request) => {
     const url = new URL(request.url);
     if (url.hostname === 'challenges.cloudflare.com') {
       const form = new URLSearchParams(await request.text());
@@ -81,16 +67,39 @@ const options = {
     return new Response(request.method === 'HEAD' ? null : object.bytes, {
       headers: { ...object.headers, 'content-length': String(object.bytes.length) },
     });
-  },
-};
-
-const runtimeOptions = (opts) => convertV4MiniflareOptions ? convertV4MiniflareOptions(opts) : opts;
-const mf = new Miniflare(runtimeOptions(options));
+  };
+const runtimeOptions = (values) => ({
+  resourcePersistencePath: state,
+  telemetry: { enabled: false },
+  log: new Log(LogLevel.NONE),
+  workers: [{
+    config: {
+      name: 'imgflare-test',
+      compatibilityDate: '2026-09-27',
+      compatibilityFlags: ['nodejs_compat'],
+      manifest,
+      env: {
+        ...Object.fromEntries(Object.entries(values).map(([key, value]) => [key, { type: 'json', value }])),
+        DB: { type: 'd1', id: 'source' },
+        RESTORE: { type: 'd1', id: 'restore' },
+        ASSETS: { type: 'fetcher', handler: async (request) => {
+          const name = new URL(request.url).pathname;
+          assert.ok(['/index.html', '/login.html'].includes(name));
+          return new Response(await readFile(resolve(root, 'dist' + name)), {
+            headers: { 'Content-Type': 'text/html' },
+          });
+        } },
+      },
+    },
+    dev: { outboundService: { type: 'fetcher', handler: outbound } },
+  }],
+});
+const mf = new Miniflare(runtimeOptions(bindings));
 const call = (path, init = {}) => mf.dispatchFetch(origin + path, { redirect: 'manual', ...init });
 const json = (body) => JSON.stringify(body);
 const login = (password = bindings.ADMIN_PASSWORD, challenge = 'valid-test-challenge') => call('/api/login', {
   method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' },
-  body: json({ username: bindings.ADMIN_USERNAME, password, turnstile_token: challenge }),
+  body: json({ username: bindings.ADMIN_USERNAME, password, 'cf-turnstile-response': challenge }),
 });
 const signCookie = (secret, payload) => {
   const body = Buffer.from(json(payload));
@@ -261,7 +270,7 @@ try {
 
   assert.equal((await call('/api/tokens/' + token.id, { method: 'DELETE', headers: adminHeaders })).status, 204);
   assert.equal((await call('/api/upload/check', { method: 'POST', headers: keyHeaders, body: json({ sha256: imageHash }) })).status, 401);
-  await mf.setOptions(runtimeOptions({ ...options, bindings: { ...bindings, SESSION_SECRET: randomBytes(32).toString('hex') } }));
+  await mf.setOptions(runtimeOptions({ ...bindings, SESSION_SECRET: randomBytes(32).toString('hex') }));
   assert.equal((await call('/api/files', { headers: adminHeaders })).status, 401);
   assert.equal((await login()).status, 200);
   console.log('✓ Token revocation and signing-secret rotation');

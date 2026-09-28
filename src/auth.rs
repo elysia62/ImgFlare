@@ -4,7 +4,7 @@
 //! password recovery — the password lives in the `ADMIN_PASSWORD` secret and
 //! sessions are stateless signed cookies, so nothing auth-related is persisted.
 
-use crate::config::{Config, secret, var};
+use crate::config::{secret, var};
 use crate::db::Db;
 use crate::error::{ApiError, ApiResult};
 use crate::utils::{
@@ -30,9 +30,7 @@ impl Principal {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Credentials
-// ---------------------------------------------------------------------------
 
 /// Verify the submitted username and password against `ADMIN_USERNAME` and
 /// `ADMIN_PASSWORD`.
@@ -49,9 +47,7 @@ pub fn verify_credentials(env: &Env, username: &str, password: &str) -> ApiResul
     Ok(user_ok & pass_ok)
 }
 
-// ---------------------------------------------------------------------------
 // Session cookie
-// ---------------------------------------------------------------------------
 
 /// The signed session payload.
 ///
@@ -156,9 +152,7 @@ pub fn has_valid_session(req: &Request, env: &Env) -> bool {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Principal resolution
-// ---------------------------------------------------------------------------
 
 /// Resolve who is calling.
 ///
@@ -234,9 +228,7 @@ pub async fn touch_token_throttled(db: &Db, token_id: &str) -> ApiResult<()> {
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
 // Login throttling
-// ---------------------------------------------------------------------------
 
 /// Failed attempts allowed per IP inside [`LOGIN_WINDOW_MS`].
 const LOGIN_MAX_ATTEMPTS: i64 = 8;
@@ -302,16 +294,14 @@ pub async fn clear_login_failures(db: &Db, ip: Option<&str>) -> ApiResult<()> {
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
 // CSRF
-// ---------------------------------------------------------------------------
 
 /// For cookie-authenticated `POST`/`DELETE`, the `Origin` header must match the
 /// panel origin.
 ///
 /// Requests authenticated with an API token are exempt: they do not rely on
 /// cookies, so a malicious page cannot ride the user's session.
-pub fn check_origin(req: &Request, _cfg: &Config) -> ApiResult<()> {
+pub fn check_origin(req: &Request) -> ApiResult<()> {
     let presented = match req.headers().get("Origin").ok().flatten() {
         Some(origin) => origin,
         // Same-origin `fetch()` from older browsers may omit Origin on GET, but
@@ -347,9 +337,7 @@ pub(crate) fn request_origin(req: &Request) -> Option<String> {
     Some(origin)
 }
 
-// ---------------------------------------------------------------------------
 // API token generation
-// ---------------------------------------------------------------------------
 
 /// A freshly minted API token: the plaintext (shown exactly once) and its hash.
 pub struct NewToken {

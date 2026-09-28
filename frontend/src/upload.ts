@@ -1,22 +1,9 @@
-/**
- * The upload queue.
- *
- * Rules from the spec, all enforced here:
- *   - at most 3 uploads in flight at once
- *   - a failed upload is retried at most 2 additional times
- *   - SHA-256 is computed client-side, then checked against the server before
- *     any bytes are sent; a duplicate short-circuits straight to success
- */
+/** Upload queue: three concurrent tasks, two retries, SHA-256 deduplication. */
 
 import { ApiError, checkDuplicate, uploadFile } from './api.js';
-import { sha256Hex } from './hash.js';
+import { IMAGE_EXT, sha256Hex } from '../../shared/image.js';
+import { formatBytes } from './ui.js';
 import type { UploadResult, UploadTask } from './types.js';
-
-const IMAGE_NAME = /\.(png|jpe?g|webp|gif|avif|bmp|ico|svg|jxl|heic|heif|tiff?)$/i;
-
-export function isSupportedImage(file: File): boolean {
-  return IMAGE_NAME.test(file.name);
-}
 
 const MAX_CONCURRENCY = 3;
 const MAX_RETRIES = 2;
@@ -56,25 +43,18 @@ export class UploadQueue {
 
   /** Total queued or in-flight work, for the "busy" indicator. */
   get activeCount(): number {
-    return this.pending.length;
-  }
-
-  get busy(): boolean {
-    return this.pending.length > 0;
+    return this.pending.length + this.running;
   }
 
   // -- writes --------------------------------------------------------------
 
   /** Add files to the queue and start processing. */
   add(files: Iterable<File>): void {
-    let rejected = 0;
-
     for (const file of files) {
       if (file.size === 0) {
-        rejected += 1;
         continue;
       }
-      if (!isSupportedImage(file)) {
+      if (!IMAGE_EXT.test(file.name)) {
         const key = this.nextKey();
         this.tasks.set(key, {
           key,
@@ -114,12 +94,8 @@ export class UploadQueue {
       this.pending.push(key);
     }
 
-    if (rejected > 0) {
-      this.notify();
-    }
-
     this.notify();
-    void this.pump();
+    this.pump();
   }
 
   /** Re-run a task that failed. */
@@ -133,7 +109,7 @@ export class UploadQueue {
     task.attempts = 0;
     this.pending.push(key);
     this.notify();
-    void this.pump();
+    this.pump();
   }
 
   /** Drop a task from the visible list. */
@@ -162,7 +138,7 @@ export class UploadQueue {
 
   // -- scheduler -----------------------------------------------------------
 
-  private async pump(): Promise<void> {
+  private pump(): void {
     while (this.running < MAX_CONCURRENCY && this.pending.length > 0) {
       const key = this.pending.shift();
       if (key === undefined) break;
@@ -173,7 +149,8 @@ export class UploadQueue {
       this.running += 1;
       void this.process(task).finally(() => {
         this.running -= 1;
-        void this.pump();
+        this.pump();
+        this.notify();
       });
     }
   }
@@ -188,7 +165,7 @@ export class UploadQueue {
       // 2. Ask the server whether these bytes already exist.
       task.state = 'checking';
       this.notify();
-      const check = await checkDuplicate(sha256, task.file.size);
+      const check = await checkDuplicate(sha256);
 
       if (check.exists && check.file) {
         // Already stored: report success without sending a single byte.
@@ -271,17 +248,4 @@ function isPermanent(error: ApiError): boolean {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/** Format a byte count for display. */
-export function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  const units = ['KB', 'MB', 'GB', 'TB'];
-  let value = bytes / 1024;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  return `${value.toFixed(1)} ${units[unit] ?? 'B'}`;
 }

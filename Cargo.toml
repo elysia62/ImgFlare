@@ -10,42 +10,17 @@ crate-type = ["cdylib"]
 
 [dependencies]
 worker = { version = "0.8.7", features = ["d1"] }
-worker-macros = "0.8.7"
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-# Content addressing: SHA-256 for file keys and API token hashing.
 sha2 = "0.10"
 hmac = "0.12"
 
-# Randomness for nonces, API tokens and temporary keys.
 getrandom = { version = "0.2", features = ["js"] }
-
-# Session cookie base64url is implemented in `utils.rs` to keep the dependency
-# list small and avoid pulling a dependency that is not wasm friendly.
 
 [profile.release]
 lto = true
 strip = true
 codegen-units = 1
 opt-level = "s"
-
-# NOTE: do NOT set `panic = "abort"` here.
-#
-# `worker-build` invokes `wasm-bindgen` with `--force-enable-abort-handler`
-# and `--experimental-reset-state-function`, which generate `catch`/`try`
-# wrappers. Those wrappers need an `externref` table and the wasm
-# `exception-handling` feature, neither of which rustc emits under
-# `panic = "abort"`. Building with `panic = "abort"` therefore fails with:
-#
-#     error: failed to generate catch wrappers
-#     caused by: externref table required for catch wrappers
-#
-# The default (`panic = "unwind"` semantics for wasm-bindgen's purposes)
-# keeps the output on par with `worker-build`'s expectations. Binary size is
-# unaffected in practice because `lto` + `strip` already remove the unwind
-# machinery that is never reachable.
-
-[package.metadata.wasm-pack.profile.release]
-wasm-opt = false

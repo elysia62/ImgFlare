@@ -1,9 +1,4 @@
-/**
- * Clipboard helpers.
- *
- * Nothing is ever copied automatically — the spec is explicit that the clipboard
- * is only written when the user presses a "copy" button.
- */
+/** Clipboard writes initiated by the panel copy buttons. */
 
 /** Copy text, returning whether it succeeded. */
 export async function copyText(text: string): Promise<boolean> {

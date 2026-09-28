@@ -14,11 +14,10 @@ use worker::{Headers, Request, Response};
 pub async fn handle_get(req: &Request, r2: &R2, name: &str) -> ApiResult<Response> {
     let (id, ext) = parse_public_image(name).ok_or(ApiError::NotFound("not_found"))?;
     let key = format!("i/{id}.{ext}");
-    let bucket = r2.bucket.clone();
 
     if req.method() == worker::Method::Head {
         let head = r2
-            .head(&bucket, &key)
+            .head(&key)
             .await?
             .ok_or(ApiError::NotFound("not_found"))?;
         let content_type = canonical_image_type(head.content_type.as_deref().unwrap_or(""))
@@ -33,7 +32,7 @@ pub async fn handle_get(req: &Request, r2: &R2, name: &str) -> ApiResult<Respons
         ));
     }
 
-    let object = r2.get(&bucket, &key).await?;
+    let object = r2.get(&key).await?;
     let stored = object
         .headers()
         .get("content-type")

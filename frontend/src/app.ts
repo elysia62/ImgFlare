@@ -1,9 +1,5 @@
-/**
- * Main application: the upload panel behind the login.
- *
- * Wires together the drop zone, the paste handler, the upload queue, the file
- * browser, token management and the backup card.
- */
+import { renamePastedImage } from '../../shared/image.js';
+/** Upload panel, file browser, token management and backups. */
 
 import {
   ApiError,
@@ -99,7 +95,7 @@ export async function initApp(): Promise<void> {
       if (item.kind !== 'file') continue;
       const file = item.getAsFile();
       // Only images come through as files on paste; name them sensibly.
-      if (file) files.push(renamePastedFile(file));
+      if (file) files.push(renamePastedImage(file));
     }
 
     if (files.length > 0) {
@@ -192,9 +188,7 @@ export async function initApp(): Promise<void> {
   ]);
 }
 
-// ---------------------------------------------------------------------------
 // Tabs
-// ---------------------------------------------------------------------------
 
 const TAB_KEY = 'pih_active_tab';
 
@@ -240,9 +234,7 @@ function initTabs(): void {
   activate(known.includes(initial) ? initial : 'upload');
 }
 
-// ---------------------------------------------------------------------------
 // Queue rendering
-// ---------------------------------------------------------------------------
 
 /** "3 个上传中 · 2 个失败" — a one-line summary of the queue. */
 function renderQueueSummary(queue: UploadQueue): void {
@@ -320,8 +312,7 @@ function renderTask(task: UploadTask, queue: UploadQueue): HTMLElement {
     children.push(el('div', { class: 'queue-actions' }, [retry]));
   }
 
-  // On success (fresh or deduplicated), offer the three actions the spec
-  // requires: copy URL, copy Markdown, open in a new tab.
+  // Completed uploads expose URL, Markdown and preview actions.
   if (task.state === 'success' || task.state === 'duplicate') {
     const file = task.result?.file;
     if (file) {
@@ -380,9 +371,7 @@ function describeState(task: UploadTask): { label: string; tone: string } {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Tokens
-// ---------------------------------------------------------------------------
 
 async function refreshTokens(container: HTMLElement): Promise<void> {
   try {
@@ -455,9 +444,7 @@ function showNewToken(token: string): void {
   ]);
 }
 
-// ---------------------------------------------------------------------------
 // Backup
-// ---------------------------------------------------------------------------
 
 async function refreshBackup(): Promise<void> {
   const host = byId('backup-status');
@@ -495,26 +482,7 @@ async function refreshBackup(): Promise<void> {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Pasted images arrive as `image.png` or similar with no useful name. Give them
- * a timestamped name so the file list is readable.
- */
-function renamePastedFile(file: File): File {
-  if (/^image\.(png|jpe?g|gif|webp|bmp|avif|ico|svg|jxl|heic|heif|tiff?)$/i.test(file.name) || file.name === 'blob') {
-    const ext = (file.type.split('/')[1] ?? 'png').replace('jpeg', 'jpg');
-    const stamp = new Date()
-      .toISOString()
-      .replace(/[-:]/g, '')
-      .replace(/\..+$/, '')
-      .replace('T', '-');
-    return new File([file], `pasted-${stamp}.${ext}`, { type: file.type });
-  }
-  return file;
-}
 
 function errorText(error: unknown, fallback: string): string {
   if (error instanceof ApiError) return humanizeError(error.code);

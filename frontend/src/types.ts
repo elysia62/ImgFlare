@@ -1,11 +1,4 @@
-/**
- * Shared type definitions.
- *
- * These mirror the Rust structs in `src/upload.rs`, `src/files.rs` and
- * `src/tokens.rs` field-for-field. Keeping them hand-written (rather than
- * generated) keeps the build simple, and `tsc --strict` catches drift at the
- * call sites.
- */
+/** API types shared by the panel and userscript. */
 
 /** A stored file, as returned by every file-related endpoint. */
 export interface FileInfo {

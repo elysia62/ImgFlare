@@ -1,9 +1,4 @@
-/**
- * File browser: paginated list, search, per-row actions.
- *
- * The list is never loaded in full — the server paginates with LIMIT/OFFSET and
- * this module appends pages as the user asks for them.
- */
+/** Paginated image browser with search, preview and deletion. */
 
 import { ApiError, deleteFile, listFiles } from './api.js';
 import type { FileInfo } from './types.js';
@@ -195,7 +190,7 @@ export class FileBrowser {
 
   private async confirmDelete(file: FileInfo): Promise<void> {
     const ok = window.confirm(
-      `确定删除「${file.name}」吗？\n\n图片会同时从 R2 和数据库中移除。\n重新上传相同内容会生成相同的 URL。`,
+      `确定删除「${file.name}」吗？\n\n图片会同时从 R2 和数据库中移除。`,
     );
     if (!ok) return;
 

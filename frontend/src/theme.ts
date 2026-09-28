@@ -1,10 +1,4 @@
-/**
- * Light / dark theme.
- *
- * With no stored preference the CSS `prefers-color-scheme` media query decides,
- * so the default follows the operating system. Once the user picks a side, the
- * choice is pinned via `data-theme` on `<html>` and remembered.
- */
+/** Persist an explicit light/dark preference; otherwise follow the system. */
 
 const THEME_KEY = 'pih_theme';
 

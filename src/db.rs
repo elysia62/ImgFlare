@@ -86,9 +86,7 @@ impl Db {
         self.inner.prepare(sql)
     }
 
-    // -----------------------------------------------------------------------
     // files
-    // -----------------------------------------------------------------------
 
     /// Look up a file by its SHA-256 (the deduplication key).
     pub async fn find_file_by_sha256(&self, sha256: &str) -> ApiResult<Option<FileRecord>> {
@@ -220,9 +218,7 @@ impl Db {
         Ok((rows, total))
     }
 
-    // -----------------------------------------------------------------------
     // api_tokens
-    // -----------------------------------------------------------------------
 
     pub async fn find_token_by_hash(&self, token_hash: &str) -> ApiResult<Option<TokenRecord>> {
         let stmt = self
@@ -286,9 +282,7 @@ impl Db {
         Ok(result.meta()?.and_then(|m| m.changes).unwrap_or(0) as u64)
     }
 
-    // -----------------------------------------------------------------------
     // kv_meta — used solely to throttle `last_used_at` writes
-    // -----------------------------------------------------------------------
 
     pub async fn meta_get(&self, key: &str) -> ApiResult<Option<String>> {
         let stmt = self

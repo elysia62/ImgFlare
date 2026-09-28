@@ -7,7 +7,7 @@ use crate::db::Db;
 use crate::error::{ApiError, ApiResult};
 use crate::r2::{PutOptions, R2};
 use crate::utils::{now_ms, sha256_hex};
-use worker::Env;
+use worker::{Delay, Env};
 
 /// Where the single backup object lives.
 pub const LATEST_KEY: &str = "back/latest.sql";
@@ -43,21 +43,20 @@ pub async fn run_backup(env: &Env, cfg: &Config) -> ApiResult<BackupReport> {
     let size = sql.len() as u64;
 
     let r2 = R2::new(&cfg.r2);
-    let bucket = r2.bucket.clone();
     let metadata = vec![
         ("backup-type".to_string(), "d1".to_string()),
         ("format".to_string(), "sql".to_string()),
         ("backup-sha256".to_string(), sha256.clone()),
         ("backup-at".to_string(), now_ms().to_string()),
     ];
-    let opts = || PutOptions {
+    let opts = PutOptions {
         content_type: "application/sql".to_string(),
         cache_control: None,
-        metadata: metadata.clone(),
+        metadata,
     };
 
     // A single checksum-verified PUT is atomic; no temporary object can leak.
-    r2.put(&bucket, LATEST_KEY, &sql, opts()).await?;
+    r2.put(LATEST_KEY, &sql, opts).await?;
 
     // Rate-limit counters are only meaningful for a 15-minute window; sweeping
     // them once a day keeps `kv_meta` from accumulating dead keys. Best effort:
@@ -87,7 +86,7 @@ pub async fn run_backup_with_retries(env: &Env, cfg: &Config) -> ApiResult<Backu
                 last_err = Some(err);
                 if attempt < MAX_ATTEMPTS {
                     // Back off between attempts.
-                    Delay::new(2_000 * attempt as u64).await;
+                    Delay::from(std::time::Duration::from_millis(2_000 * attempt as u64)).await;
                 }
             }
         }
@@ -107,8 +106,7 @@ pub struct BackupStatus {
 
 /// Read the status of `back/latest.sql` without downloading its body.
 pub async fn read_status(r2: &R2) -> ApiResult<BackupStatus> {
-    let bucket = r2.bucket.clone();
-    match r2.head(&bucket, LATEST_KEY).await? {
+    match r2.head(LATEST_KEY).await? {
         Some(obj) => Ok(BackupStatus {
             exists: true,
             size: obj.size,
@@ -129,8 +127,7 @@ pub async fn read_status(r2: &R2) -> ApiResult<BackupStatus> {
 
 /// Download `back/latest.sql` for the admin.
 pub async fn download_latest(r2: &R2) -> ApiResult<Vec<u8>> {
-    let bucket = r2.bucket.clone();
-    let mut object = match r2.get(&bucket, LATEST_KEY).await {
+    let mut object = match r2.get(LATEST_KEY).await {
         Err(ApiError::NotFound(_)) => {
             return Err(ApiError::NotFound("no_backup_available"));
         }
@@ -140,18 +137,4 @@ pub async fn download_latest(r2: &R2) -> ApiResult<Vec<u8>> {
         .bytes()
         .await
         .map_err(|e| ApiError::Internal(format!("reading backup failed: {e}")))
-}
-
-/// Sleep helper.
-///
-/// `worker::Delay` is the runtime's timer; using it avoids pulling in a tokio
-/// dependency just for `sleep`.
-struct Delay;
-
-impl Delay {
-    #[allow(clippy::new_ret_no_self)]
-    async fn new(ms: u64) {
-        use worker::Delay as WorkerDelay;
-        WorkerDelay::from(std::time::Duration::from_millis(ms)).await;
-    }
 }

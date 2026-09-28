@@ -1,23 +1,14 @@
-# Local development — COPY THIS TO `.dev.vars` AND EDIT.
-#
-# `.dev.vars` is git-ignored. Never commit real values.
-
-# Admin credentials.
+# Copy to .dev.vars and fill in your values.
 ADMIN_USERNAME=admin
-ADMIN_PASSWORD=dev-password
-
-# Generate once with `openssl rand -hex 32`; keep it stable across deployments.
-# Never use this placeholder or the old public signing key.
+ADMIN_PASSWORD=YOUR_ADMIN_PASSWORD
+# Generate once: openssl rand -hex 32
 SESSION_SECRET=YOUR_RANDOM_SESSION_SECRET
 
-# Turnstile test keys — always pass, safe for local development.
-# https://developers.cloudflare.com/turnstile/troubleshooting/testing/
+# Official Turnstile test keys for local development.
 TURNSTILE_SITE_KEY=1x00000000000000000000AA
 TURNSTILE_SECRET=1x0000000000000000000000000000000AA
 
-# R2 S3 API token. One bucket holds images under i/ and the backup under back/.
-# A value that is empty or starts with YOUR_ is treated as unset.
-R2_ACCOUNT_ID=00000000000000000000000000000000
-R2_ACCESS_KEY_ID=replace-with-access-key-id
-R2_SECRET_ACCESS_KEY=replace-with-secret-access-key
+R2_ACCOUNT_ID=YOUR_R2_ACCOUNT_ID
+R2_ACCESS_KEY_ID=YOUR_R2_ACCESS_KEY_ID
+R2_SECRET_ACCESS_KEY=YOUR_R2_SECRET_ACCESS_KEY
 R2_BUCKET=imgflare

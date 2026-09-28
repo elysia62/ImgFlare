@@ -1,10 +1,3 @@
-// Deploy reads the account settings from the environment and uploads
-// them with the Worker. Cloudflare's build variables are not Worker bindings,
-// so `wrangler deploy` cannot see values that were only typed on that page.
-//
-// Nothing here is printed. The secrets file is created outside the repo and
-// removed when the command finishes.
-
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -66,20 +59,16 @@ function readDevVars() {
 
 function run(command, args, env) {
   const result = spawnSync(command, args, { stdio: "inherit", env });
+  if (result.error) throw result.error;
   if (result.status !== 0) {
-    process.exit(result.status ?? 1);
+    throw new Error(`${command} exited with status ${result.status ?? 1}`);
   }
 }
 
 function main() {
   const { values, missing } = loadConfig(process.env, readDevVars());
   if (missing.length > 0) {
-    console.error(
-      `部署读不到这些配置：${missing.join(", ")}\n` +
-        "它们要填在 Settings → Build → Build variables and secrets。\n" +
-        "这一页只给构建用，不会自动变成 Worker 配置；部署命令负责写进去。\n" +
-        "选「变量」或「密钥」都可以，名字必须和上面一致。BUN_VERSION 不用写进 Worker。",
-    );
+    console.error(`缺少或无效配置：${missing.join(", ")}。请填写 Build variables and secrets。`);
     process.exit(1);
   }
 
@@ -104,4 +93,10 @@ function main() {
   }
 }
 
-if (import.meta.main) main();
+if (import.meta.main) {
+  try { main(); }
+  catch (error) {
+    console.error(error.message);
+    process.exitCode = 1;
+  }
+}

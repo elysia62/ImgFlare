@@ -1,28 +1,15 @@
-//! Response helpers.
-//!
-//! All success responses share the shape:
-//!
-//! ```json
-//! { "success": true, ...payload }
-//! ```
-//!
-//! Errors are produced by [`crate::error::ApiError`] and always look like:
-//!
-//! ```json
-//! { "success": false, "error": "unauthorized" }
-//! ```
+//! JSON envelopes and HTTP response helpers.
 
 use serde::Serialize;
 use worker::{Headers, Response, ResponseBuilder};
 
-/// `200 { "success": true, ... }`
+/// `200 { "success": true, "data": ... }`
 pub fn ok<T: Serialize>(payload: T) -> Response {
     let body = serde_json::json!({ "success": true, "data": payload });
     json(body, 200)
 }
 
-/// `200` with an explicit top-level object (used where the spec dictates the
-/// exact field layout, e.g. `{ success, exists, file }`).
+/// Upload endpoints expose their fields at the top level.
 pub fn ok_raw(body: serde_json::Value) -> Response {
     json(body, 200)
 }

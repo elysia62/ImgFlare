@@ -1,28 +1,9 @@
-#:schema node_modules/wrangler/config-schema.json
-
-# ---------------------------------------------------------------------------
-# ImgFlare
-#
-# Single origin. `/` is the admin panel (redirects to /login when signed out),
-# `/i/<id>.<ext>` serves public images without authentication, and everything else
-# lives under `/api/*` and requires a session or an API token.
-#
-# Deploy via Cloudflare's Git integration. Connect the repo and set the build
-# and deploy commands from the README.
-#
-# D1 is created on first deploy. `migrations/init_01.sql` is applied by the
-# deploy command. R2 is not created here: the Worker talks to buckets you
-# create, using an access key you also use for sync.
-# ---------------------------------------------------------------------------
-
 name = "imgflare"
 main = "build/worker/shim.mjs"
 compatibility_date = "2026-09-27"
 
-# Rust/Wasm workers need this flag while the module format settles.
 compatibility_flags = ["nodejs_compat"]
 
-# Workers Logs is off.
 [observability]
 enabled = false
 
@@ -32,18 +13,14 @@ binding = "ASSETS"
 not_found_handling = "none"
 run_worker_first = ["/", "/index.html", "/login", "/i/*", "/api/*"]
 
-# Every day at 04:00 UTC: D1 -> SQL -> R2 `back/latest.sql`
 [triggers]
 crons = ["0 4 * * *"]
 
-# Created on first deploy if it does not exist. Schema comes from
-# `migrations/init_01.sql` (`bun run deploy` applies it).
 [[d1_databases]]
 binding = "DB"
 database_name = "imgflare-db"
 migrations_dir = "migrations"
 
-# Typed by the operator on Cloudflare's create-project page. No values here.
 [secrets]
 required = [
   "ADMIN_USERNAME",

@@ -1,23 +1,4 @@
-//! Personal Image Host — a single-administrator image host.
-//!
-//! ```text
-//! imgflare.example.com  -> this Rust/Wasm Worker
-//!   ├── GET  /i/<sha256>   public images, no auth
-//!   ├── POST /api/login    username + password + Turnstile
-//!   ├── upload, dedup, list, search, delete
-//!   ├── API tokens for the userscript
-//!   └── daily D1 -> SQL -> R2 backup
-//! ```
-//!
-//! One origin. Public reads need no credentials; everything else does.
-//!
-//! Storage layout:
-//!
-//! ```text
-//! R2 image bucket    i/<sha256>
-//!                    back/latest.sql
-//! D1                 files, api_tokens, kv_meta
-//! ```
+//! Personal image host: session login, API-key uploads, R2 images and D1 metadata.
 
 mod auth;
 mod backup;
@@ -35,10 +16,6 @@ mod turnstile;
 mod upload;
 mod utils;
 
-// `event`, `console_log` and friends are exported by worker-macros / worker-sys
-// at the crate root. In edition 2024 a derive-like attribute macro has to be
-// brought into scope explicitly, so pull the macro in rather than relying on
-// textual scope resolution.
 use worker::event;
 use worker::{Context, Env, Request, Response, ScheduleContext, ScheduledEvent};
 
@@ -57,8 +34,7 @@ pub async fn main(req: Request, env: Env, ctx: Context) -> Result<Response, work
 
 /// Cron entry point: `0 4 * * *` (04:00 UTC / 12:00 Asia/Taipei).
 ///
-/// This handler does exactly one thing — back D1 up to the backup bucket.
-/// Public file access never touches this path.
+/// Writes the database backup to the image bucket.
 #[event(scheduled)]
 pub async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
     let result = match config::Config::from_env(&env) {

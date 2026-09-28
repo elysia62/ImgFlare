@@ -66,16 +66,11 @@ pub fn r2_key_for(id: &str, ext: &str) -> String {
     format!("i/{id}.{ext}")
 }
 
-// ---------------------------------------------------------------------------
 // /api/upload/check
-// ---------------------------------------------------------------------------
 
 #[derive(Deserialize)]
 pub struct CheckRequest {
     pub sha256: String,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub size: Option<i64>,
 }
 
 /// Body of a successful check.
@@ -112,9 +107,7 @@ pub async fn handle_check(
     }
 }
 
-// ---------------------------------------------------------------------------
 // /api/upload
-// ---------------------------------------------------------------------------
 
 /// Outcome of an upload: either freshly stored or deduplicated.
 pub struct UploadOutcome {
@@ -193,10 +186,8 @@ pub async fn handle_upload(
         .ok_or(ApiError::UnsupportedMediaType("unsupported_file_type"))?;
     let key = r2_key_for(&public_image_id(), ext);
     let r2 = R2::new(&cfg.r2);
-    let bucket = r2.bucket.clone();
     let etag = r2
         .put(
-            &bucket,
             &key,
             &bytes,
             PutOptions {
@@ -230,7 +221,7 @@ pub async fn handle_upload(
         // Lost a race against a concurrent upload of the same bytes. That upload
         // owns the public name, so drop the object we just wrote.
         Err(_) => {
-            let _ = r2.delete(&bucket, &record.r2_key).await;
+            let _ = r2.delete(&record.r2_key).await;
             match db.find_file_by_sha256(&declared).await? {
             Some(existing) => Ok(UploadOutcome {
                 file: FileInfo::from_record(&existing, origin),
@@ -274,10 +265,4 @@ pub fn is_multipart(req: &worker::Request) -> bool {
         .flatten()
         .map(|ct| ct.to_ascii_lowercase().starts_with("multipart/form-data"))
         .unwrap_or(false)
-}
-
-/// Delete an object from the image bucket.
-pub async fn delete_object(r2: &R2, r2_key: &str) -> ApiResult<()> {
-    let bucket = r2.bucket.clone();
-    r2.delete(&bucket, r2_key).await
 }

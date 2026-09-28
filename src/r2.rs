@@ -30,7 +30,7 @@ pub struct R2 {
     account_id: String,
     access_key_id: String,
     secret_access_key: String,
-    pub bucket: String,
+    bucket: String,
 }
 
 impl R2 {
@@ -46,7 +46,6 @@ impl R2 {
     /// Upload `body`. Returns the ETag R2 assigned, which may be empty.
     pub async fn put(
         &self,
-        bucket: &str,
         key: &str,
         body: &[u8],
         opts: PutOptions,
@@ -71,7 +70,7 @@ impl R2 {
         }
 
         let mut resp = self
-            .call(Method::Put, bucket, key, Some(body), &payload_hash, extra)
+            .call(Method::Put, key, Some(body), &payload_hash, extra)
             .await?;
         ensure_success(&mut resp, "put").await?;
         Ok(resp
@@ -83,11 +82,10 @@ impl R2 {
     }
 
     /// Download an object. `404` is [`ApiError::NotFound`].
-    pub async fn get(&self, bucket: &str, key: &str) -> ApiResult<Response> {
+    pub async fn get(&self, key: &str) -> ApiResult<Response> {
         let mut resp = self
             .call(
                 Method::Get,
-                bucket,
                 key,
                 None,
                 EMPTY_PAYLOAD_SHA256,
@@ -102,11 +100,10 @@ impl R2 {
     }
 
     /// `None` when the key does not exist.
-    pub async fn head(&self, bucket: &str, key: &str) -> ApiResult<Option<ObjectHead>> {
+    pub async fn head(&self, key: &str) -> ApiResult<Option<ObjectHead>> {
         let mut resp = self
             .call(
                 Method::Head,
-                bucket,
                 key,
                 None,
                 EMPTY_PAYLOAD_SHA256,
@@ -143,11 +140,10 @@ impl R2 {
     }
 
     /// Delete an object. A missing key is not an error.
-    pub async fn delete(&self, bucket: &str, key: &str) -> ApiResult<()> {
+    pub async fn delete(&self, key: &str) -> ApiResult<()> {
         let mut resp = self
             .call(
                 Method::Delete,
-                bucket,
                 key,
                 None,
                 EMPTY_PAYLOAD_SHA256,
@@ -163,14 +159,13 @@ impl R2 {
     async fn call(
         &self,
         method: Method,
-        bucket: &str,
         key: &str,
         body: Option<&[u8]>,
         payload_hash: &str,
         extra: Vec<(String, String)>,
     ) -> ApiResult<Response> {
         let host = format!("{}.r2.cloudflarestorage.com", self.account_id);
-        let canonical_uri = s3sign::encode_uri_path(&format!("/{bucket}/{key}"));
+        let canonical_uri = s3sign::encode_uri_path(&format!("/{}/{key}", self.bucket));
         let url = format!("https://{host}{canonical_uri}");
         let (date, amz_date) = s3sign::aws_timestamps(now_ms());
 

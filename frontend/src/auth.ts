@@ -1,9 +1,4 @@
-/**
- * Login page logic: password + Turnstile, server-verified.
- *
- * The Turnstile widget's response token is posted to the server, which performs
- * the real check against `siteverify`. The widget on its own proves nothing.
- */
+/** Username/password login with server-verified Turnstile. */
 
 import { ApiError, login, me } from './api.js';
 import { humanizeError } from './types.js';

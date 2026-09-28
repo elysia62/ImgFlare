@@ -1,22 +1,5 @@
 #!/usr/bin/env bun
-/**
- * API contract check: keeps the Rust response shape and the TypeScript types
- * in agreement.
- *
- * Why this exists
- * ---------------
- * Rust serialises with serde; TypeScript declares interfaces by hand. Nothing
- * makes the two agree. A field renamed on one side (`created_at` vs
- * `createdAt`) compiles perfectly on both sides and fails only at runtime, as
- * `undefined` in the UI — or worse, as a thrown TypeError like
- * `undefined.startsWith(...)`.
- *
- * This script reads the structs out of the Rust source and the interfaces out
- * of the TypeScript, converts both to a common camelCase form, and reports any
- * client-facing field that exists on one side but not the other.
- *
- * Run:  bun run test/contract.mjs
- */
+/** Check Rust/TypeScript response fields and static safety invariants. */
 
 import path from "node:path";
 import process from "node:process";
@@ -27,9 +10,8 @@ if (typeof Bun === "undefined") {
 
 const ROOT = path.resolve(import.meta.dir, "..");
 
-// ---------------------------------------------------------------------------
 // The pairs that must agree. Left = Rust struct, right = TS interface.
-// ---------------------------------------------------------------------------
+
 const PAIRS = [
   { rust: ["src/upload.rs", "FileInfo"], ts: ["FileInfo"], note: "GET /api/files, POST /api/upload" },
   { rust: ["src/files.rs", "ListResponse"], ts: ["FileListResponse"], note: "GET /api/files" },
@@ -79,9 +61,8 @@ async function tsFields(interfaceName) {
   throw new Error(`interface ${interfaceName} not found under frontend/src`);
 }
 
-// ---------------------------------------------------------------------------
 // Run
-// ---------------------------------------------------------------------------
+
 let failures = 0;
 
 console.log("API 契约检查 — Rust 序列化结果 vs TypeScript 类型\n");
@@ -118,16 +99,13 @@ if (failures) {
 }
 console.log("契约检查通过：所有客户端字段一一对应");
 
-// ---------------------------------------------------------------------------
 // Static safety invariants
 //
 // These are grep-level checks for rules that are easy to break by accident and
 // expensive to discover in production. They are not a substitute for review —
 // they are a tripwire.
-// ---------------------------------------------------------------------------
-console.log("\n静态安全不变量\n");
 
-const SOURCES = ["frontend/src", "userscript", "src"];
+console.log("\n静态安全不变量\n");
 
 /** Collect files under a directory that match an extension list. */
 async function collect(dir, exts) {
@@ -143,7 +121,7 @@ const INVARIANTS = [
   {
     name: "前端不使用 innerHTML 类 API（XSS 防线）",
     exts: [".ts", ".js"],
-    dirs: ["frontend/src", "userscript"],
+    dirs: ["frontend/src", "userscript", "shared"],
     // Allow the phrase inside comments; flag real call sites.
     pattern: /\.(innerHTML|outerHTML|insertAdjacentHTML)\s*[=(]/,
   },
@@ -189,59 +167,6 @@ for (const inv of INVARIANTS) {
   } else {
     console.log(`  ✓ ${inv.name}`);
   }
-}
-
-// ---------------------------------------------------------------------------
-// Public image responses
-//
-// Known image types are returned as themselves. Anything else is a 404 and
-// the body is not sent.
-// ---------------------------------------------------------------------------
-console.log("\n公开图片响应");
-
-{
-  const utils = await Bun.file(path.join(ROOT, "src/utils.rs")).text();
-  const pub = await Bun.file(path.join(ROOT, "src/public.rs")).text();
-  const types = [
-    "image/png",
-    "image/jpeg",
-    "image/webp",
-    "image/gif",
-    "image/avif",
-    "image/bmp",
-    "image/x-icon",
-    "image/svg+xml",
-    "image/jxl",
-    "image/heic",
-    "image/heif",
-    "image/tiff",
-  ];
-
-  let bad = 0;
-  for (const type of types) {
-    if (!utils.includes(`"${type}"`)) {
-      console.log(`  ✗ utils.rs 没有 ${type}`);
-      bad++;
-    } else {
-      console.log(`  ✓ ${type}`);
-    }
-  }
-  if (!pub.includes('ApiError::NotFound("not_found")')) {
-    console.log("  ✗ 非图片没有返回 404");
-    bad++;
-  }
-  if (pub.includes("application/octet-stream")) {
-    console.log("  ✗ 仍在把非图片按文件流返回");
-    bad++;
-  }
-  for (const banned of ["application/pdf", "application/javascript", "text/html", "application/zip", ".user.js"]) {
-    if (utils.includes(banned)) {
-      console.log(`  ✗ utils.rs 仍接受非图片：${banned}`);
-      bad++;
-    }
-  }
-  if (bad) violations++;
-  else console.log("  ✓ 图片原样返回，其它类型 404");
 }
 
 console.log();

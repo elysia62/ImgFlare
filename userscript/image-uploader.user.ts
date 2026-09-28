@@ -1,30 +1,9 @@
-/**
- * 个人图床上传助手 — Tampermonkey / Violentmonkey 用户脚本
- *
- * ---------------------------------------------------------------------------
- * 手动配置：只改下面两行，保存即可。
- * ---------------------------------------------------------------------------
- *   API_URL   你的图床地址，例如 https://img.example.com
- *   API_TOKEN 后台「API Token」页生成的、cph_ 开头的 Token
- *
- * 用法：在任意网页 Ctrl+V 粘贴图片，或把图片直接拖进页面。
- * 上传完成后 Markdown 会插入当前光标处，同时留在剪贴板里。
- *
- * 设计取舍：
- *   - 没有悬浮按钮、没有面板、没有提示框；出错只写 `console`。
- *   - 在你自己的图床域名下完全不运行：后台面板本身就支持粘贴上传，
- *     两边都拦截的话同一张图会被上传两次。
- *   - 只在最外层文档运行，不在 iframe 里重复接管粘贴事件。
- *
- * 这个文件是 TypeScript 源码，由 `bun run build:userscript` 编译成同目录下的
- * `image-uploader.user.js`，编译产物可以直接安装，用户无需安装 Node。
- *
- * 注意：更新脚本会覆盖你手改的配置，升级前先记下这两行的值。
- */
+import { IMAGE_EXT, renamePastedImage, sha256Hex } from '../shared/image.js';
+import type { ApiResponse, DuplicateCheckResult, UploadResult } from '../frontend/src/types.js';
 
-/* -------------------------------------------------------------------------- */
+/** Paste or drop images to upload with API_TOKEN and insert Markdown. */
+
 /* 油猴 API 的最小类型声明                                                    */
-/* -------------------------------------------------------------------------- */
 
 interface GmResponse {
   status: number;
@@ -51,17 +30,9 @@ interface GmRequestDetails {
 
 declare function GM_xmlhttpRequest(details: GmRequestDetails): void;
 
-/* -------------------------------------------------------------------------- */
 /* 配置                                                                       */
-/* -------------------------------------------------------------------------- */
 
-/**
- * 图床地址，务必带上 `https://`。
- *
- * 手填时最容易漏掉协议头，而 `new URL('img.example.com')` 会直接抛错：
- * 脚本会把「解析不了」当成「这是自己的面板」而整个停用，表现就是粘贴没反应，
- * 所以下面 `isOwnPanel()` 对这种情况单独处理。
- */
+/** 图床地址（含 https://）和后台生成的 API Token。 */
 const API_URL = 'https://img.example.com';
 
 /** 后台「API Token」页生成，只显示一次，形如 cph_xxxxxxxx。 */
@@ -72,46 +43,6 @@ const MAX_CONCURRENCY = 3;
 
 /** 失败重试次数（不含首次）。 */
 const MAX_RETRIES = 2;
-
-/** 扩展名白名单，和服务端接受的一致。 */
-const IMAGE_EXT = /\.(png|jpe?g|webp|gif|avif|bmp|ico|svg|jxl|heic|heif|tiff?)$/i;
-
-/* -------------------------------------------------------------------------- */
-/* 接口类型                                                                   */
-/* -------------------------------------------------------------------------- */
-
-interface FileInfo {
-  id: string;
-  sha256: string;
-  name: string;
-  contentType: string;
-  size: number;
-  url: string;
-  markdown: string;
-  createdAt: number;
-}
-
-interface UploadResult {
-  success: boolean;
-  deduplicated: boolean;
-  file: FileInfo;
-}
-
-interface CheckResult {
-  success: boolean;
-  exists: boolean;
-  file?: FileInfo;
-}
-
-interface ApiEnvelope<T> {
-  success: boolean;
-  data?: T;
-  error?: string;
-}
-
-/* -------------------------------------------------------------------------- */
-/* 网络请求                                                                   */
-/* -------------------------------------------------------------------------- */
 
 /** 统一的 JSON 请求；失败时抛出带错误码的 `Error`。 */
 function request<T>(
@@ -146,9 +77,9 @@ function request<T>(
       anonymous: true,
       timeout: 120_000,
       onload: (response) => {
-        let payload: ApiEnvelope<T> | null = null;
+        let payload: ApiResponse<T> | null = null;
         try {
-          payload = JSON.parse(response.responseText) as ApiEnvelope<T>;
+          payload = JSON.parse(response.responseText) as ApiResponse<T>;
         } catch {
           payload = null;
         }
@@ -181,13 +112,7 @@ function configLooksUnset(): boolean {
   );
 }
 
-/**
- * 当前页面是否就是自己的图床（面板本身支持粘贴上传，两边都拦会重复上传）。
- *
- * 地址写得不合法时**不能**返回 `true`：那会让脚本静默失效，用户只会看到
- * 「粘贴没反应」。这种情况返回 `false`，让粘贴照常走上传流程，出错时至少
- * 控制台里有明确日志。
- */
+/** Avoid duplicate uploads on the image-host panel. */
 function isOwnPanel(): boolean {
   const raw = apiBase();
   if (!/^https?:\/\//i.test(raw)) return false;
@@ -198,33 +123,7 @@ function isOwnPanel(): boolean {
   }
 }
 
-/* -------------------------------------------------------------------------- */
 /* 上传                                                                       */
-/* -------------------------------------------------------------------------- */
-
-/**
- * 计算 SHA-256。服务端用它查重并校验上传内容，所以这步不能跳过。
- *
- * `crypto.subtle` 只在安全上下文（HTTPS 或 localhost）可用；普通 HTTP 页面上
- * 它是 `undefined`，直接调用只会抛出 `undefined.digest` 这种看不懂的错误。
- */
-async function sha256Hex(blob: Blob): Promise<string> {
-  const subtle = globalThis.crypto?.subtle;
-  if (!subtle) {
-    throw new Error(
-      '当前页面不是 HTTPS，浏览器不提供 SHA-256（crypto.subtle），无法上传',
-    );
-  }
-
-  const buffer = await blob.arrayBuffer();
-  const digest = await subtle.digest('SHA-256', buffer);
-  const bytes = new Uint8Array(digest);
-  let out = '';
-  for (const byte of bytes) {
-    out += byte.toString(16).padStart(2, '0');
-  }
-  return out;
-}
 
 /**
  * 上传一个文件，返回可直接粘贴的 Markdown。
@@ -234,9 +133,9 @@ async function sha256Hex(blob: Blob): Promise<string> {
 async function uploadOne(file: File): Promise<string> {
   const sha256 = await sha256Hex(file);
 
-  const check = await request<CheckResult>('/api/upload/check', {
+  const check = await request<DuplicateCheckResult>('/api/upload/check', {
     method: 'POST',
-    body: { sha256, size: file.size },
+    body: { sha256 },
   });
   if (check.exists && check.file) return check.file.markdown;
 
@@ -270,9 +169,7 @@ async function uploadOne(file: File): Promise<string> {
   throw lastError instanceof Error ? lastError : new Error('upload_failed');
 }
 
-/* -------------------------------------------------------------------------- */
 /* 队列：同一时间最多上传 MAX_CONCURRENCY 个                                  */
-/* -------------------------------------------------------------------------- */
 
 const pending: { file: File; target: HTMLElement | null }[] = [];
 let running = 0;
@@ -312,9 +209,7 @@ function pump(): void {
   }
 }
 
-/* -------------------------------------------------------------------------- */
 /* 把 Markdown 插入当前编辑位置                                               */
-/* -------------------------------------------------------------------------- */
 
 /**
  * 找到用户正在编辑的元素。
@@ -383,39 +278,9 @@ async function copyToClipboard(text: string): Promise<void> {
   }
 }
 
-/* -------------------------------------------------------------------------- */
 /* 输入方式：粘贴与拖拽                                                       */
-/* -------------------------------------------------------------------------- */
 
-/**
- * 粘贴进来的图片常常叫 `image.png` 或 `blob`，补上时间戳和真实扩展名。
- *
- * 保留原扩展名会让同一秒内的多张截图互相覆盖记忆，而 `blob` 这种没有扩展名
- * 的名字又不能直接用来拼公开地址。
- */
-function renamePasted(file: File): File {
-  const named = /^image\.(png|jpe?g|gif|webp|bmp|avif|ico|svg|jxl|heic|heif|tiff?)$/i.test(file.name);
-  if (file.name !== 'blob' && !named) return file;
-
-  const ext = (file.type.split('/')[1] ?? 'png').replace('jpeg', 'jpg');
-  const stamp = new Date()
-    .toISOString()
-    .replace(/[-:]/g, '')
-    .replace(/\..+$/, '')
-    .replace('T', '-');
-  return new File([file], `pasted-${stamp}.${ext}`, { type: file.type });
-}
-
-/**
- * 从粘贴事件里取出图片。
- *
- * 两个来源都要看，顺序也和主流脚本一致：
- *   1. `clipboardData.files` —— 从系统复制文件（如截图后直接粘贴）时只有这个。
- *   2. `clipboardData.items` —— 网页里复制图片时用这个。
- *
- * 只读 `items` 会漏掉第一种情况，表现就是「粘贴没反应」。
- * 另外用 MIME 而不是文件名判断类型：粘贴进来的文件常叫 `blob` 或没有扩展名。
- */
+/** System file copies and browser image copies expose different clipboard fields. */
 function imagesFromClipboard(event: ClipboardEvent): File[] {
   const data = event.clipboardData;
   if (!data) return [];
@@ -437,12 +302,7 @@ function imagesFromClipboard(event: ClipboardEvent): File[] {
   return out;
 }
 
-/**
- * 这是不是一张可以上传的图片？
- *
- * 以 MIME 为主 —— 服务端最终按文件头判断，扩展名只用于拼公开地址，所以这里
- * 放宽一点，让没有扩展名的粘贴内容也能进到上传流程，由服务端给出明确结论。
- */
+/** Accept clipboard MIME types, falling back to filename extensions. */
 function looksLikeImage(file: File): boolean {
   if (file.size === 0) return false;
   if (file.type.startsWith('image/')) return true;
@@ -454,7 +314,7 @@ function installHandlers(): void {
   document.addEventListener(
     'paste',
     (event) => {
-      const files = imagesFromClipboard(event).map(renamePasted);
+      const files = imagesFromClipboard(event).map(renamePastedImage);
       if (files.length === 0) return;
 
       // 只在这时候才拦截，避免影响正常的文字粘贴。
@@ -479,9 +339,7 @@ function installHandlers(): void {
   });
 }
 
-/* -------------------------------------------------------------------------- */
 /* 启动                                                                       */
-/* -------------------------------------------------------------------------- */
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));

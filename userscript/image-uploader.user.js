@@ -7,18 +7,33 @@
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
 // @connect      *
-// @connect      localhost
 // @run-at       document-idle
 // ==/UserScript==
 
 "use strict";
 (() => {
+  // shared/image.ts
+  var IMAGE_EXT = /\.(png|jpe?g|webp|gif|avif|bmp|ico|svg|jxl|heic|heif|tiff?)$/i;
+  var PASTED_IMAGE_NAME = new RegExp("^image" + IMAGE_EXT.source, "i");
+  async function sha256Hex(blob) {
+    const subtle = globalThis.crypto?.subtle;
+    if (!subtle) throw new Error("\u5F53\u524D\u9875\u9762\u4E0D\u662F HTTPS\uFF0C\u65E0\u6CD5\u8BA1\u7B97\u6587\u4EF6\u6821\u9A8C\u503C");
+    const digest = await subtle.digest("SHA-256", await blob.arrayBuffer());
+    return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+  }
+  function renamePastedImage(file) {
+    if (file.name !== "blob" && !PASTED_IMAGE_NAME.test(file.name)) return file;
+    const type = file.type.split("/")[1] || "png";
+    const ext = { jpeg: "jpg", "svg+xml": "svg", "x-icon": "ico", "vnd.microsoft.icon": "ico" }[type] ?? type;
+    const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[-:]/g, "").replace(/\..+$/, "").replace("T", "-");
+    return new File([file], `pasted-${stamp}.${ext}`, { type: file.type });
+  }
+
   // userscript/image-uploader.user.ts
   var API_URL = "https://img.example.com";
   var API_TOKEN = "cph_\u5728\u8FD9\u91CC\u586B\u5165\u4F60\u7684Token";
   var MAX_CONCURRENCY = 3;
   var MAX_RETRIES = 2;
-  var IMAGE_EXT = /\.(png|jpe?g|webp|gif|avif|bmp|ico|svg|jxl|heic|heif|tiff?)$/i;
   function request(path, options = {}) {
     return new Promise((resolve, reject) => {
       const headers = {
@@ -74,27 +89,11 @@
       return false;
     }
   }
-  async function sha256Hex(blob) {
-    const subtle = globalThis.crypto?.subtle;
-    if (!subtle) {
-      throw new Error(
-        "\u5F53\u524D\u9875\u9762\u4E0D\u662F HTTPS\uFF0C\u6D4F\u89C8\u5668\u4E0D\u63D0\u4F9B SHA-256\uFF08crypto.subtle\uFF09\uFF0C\u65E0\u6CD5\u4E0A\u4F20"
-      );
-    }
-    const buffer = await blob.arrayBuffer();
-    const digest = await subtle.digest("SHA-256", buffer);
-    const bytes = new Uint8Array(digest);
-    let out = "";
-    for (const byte of bytes) {
-      out += byte.toString(16).padStart(2, "0");
-    }
-    return out;
-  }
   async function uploadOne(file) {
     const sha256 = await sha256Hex(file);
     const check = await request("/api/upload/check", {
       method: "POST",
-      body: { sha256, size: file.size }
+      body: { sha256 }
     });
     if (check.exists && check.file) return check.file.markdown;
     let lastError = null;
@@ -191,13 +190,6 @@
     } catch {
     }
   }
-  function renamePasted(file) {
-    const named = /^image\.(png|jpe?g|gif|webp|bmp|avif|ico|svg|jxl|heic|heif|tiff?)$/i.test(file.name);
-    if (file.name !== "blob" && !named) return file;
-    const ext = (file.type.split("/")[1] ?? "png").replace("jpeg", "jpg");
-    const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[-:]/g, "").replace(/\..+$/, "").replace("T", "-");
-    return new File([file], `pasted-${stamp}.${ext}`, { type: file.type });
-  }
   function imagesFromClipboard(event) {
     const data = event.clipboardData;
     if (!data) return [];
@@ -223,7 +215,7 @@
     document.addEventListener(
       "paste",
       (event) => {
-        const files = imagesFromClipboard(event).map(renamePasted);
+        const files = imagesFromClipboard(event).map(renamePastedImage);
         if (files.length === 0) return;
         event.preventDefault();
         event.stopPropagation();

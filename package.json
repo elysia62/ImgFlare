@@ -6,7 +6,8 @@
   "license": "MIT",
   "type": "module",
   "engines": {
-    "bun": ">=1.4.0"
+    "bun": ">=1.4.0",
+    "node": ">=22"
   },
   "packageManager": "bun@1.4.2",
   "scripts": {
@@ -18,8 +19,8 @@
     "build:worker": "bun run scripts/build-worker.mjs",
     "build": "bun run build:assets && bun run build:worker",
     "deploy": "bun run scripts/deploy.mjs",
-    "dev": "bun run build:assets && bunx wrangler d1 migrations apply DB --local && bunx wrangler dev",
-    "dev:cron": "bun run build:assets && bunx wrangler dev --test-scheduled",
+    "dev": "bun run build && bunx wrangler d1 migrations apply DB --local && bunx wrangler dev",
+    "dev:cron": "bun run build && bunx wrangler d1 migrations apply DB --local && bunx wrangler dev --test-scheduled",
     "db:migrate:local": "bunx wrangler d1 migrations apply DB --local",
     "db:migrate:remote": "bunx wrangler d1 migrations apply DB --remote",
     "verify": "bun run typecheck && bun run check:contract && bun run build && node test/integration.mjs",
@@ -27,10 +28,8 @@
     "test:integration": "bun run build && node test/integration.mjs"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20250109.0",
-    "@types/bun": "latest",
-    "esbuild": "^0.25.0",
-    "typescript": "^5.7.0",
-    "wrangler": "^4.0.0"
+    "esbuild": "0.25.12",
+    "typescript": "5.9.3",
+    "wrangler": "4.141.0"
   }
 }

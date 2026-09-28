@@ -13,7 +13,6 @@ pub const MAX_UPLOAD_SIZE: usize = 52_428_800;
 /// Session cookie lifetime. 7 days. Not a Cloudflare variable.
 pub const SESSION_TTL_SECONDS: i64 = 604_800;
 
-#[derive(Clone)]
 pub struct R2Settings {
     pub account_id: String,
     pub access_key_id: String,
@@ -22,7 +21,6 @@ pub struct R2Settings {
 }
 
 /// Everything the handlers need, resolved once per request.
-#[derive(Clone)]
 pub struct Config {
     pub turnstile_site_key: String,
     pub r2: R2Settings,
@@ -31,13 +29,6 @@ pub struct Config {
 impl Config {
     pub fn from_env(env: &Env) -> ApiResult<Self> {
         let turnstile_site_key = required(env, "TURNSTILE_SITE_KEY")?;
-        if turnstile_site_key.starts_with("YOUR_") {
-            return Err(ApiError::Internal(
-                "TURNSTILE_SITE_KEY is still a placeholder; set the Site Key from your Turnstile widget"
-                    .into(),
-            ));
-        }
-
         let r2 = R2Settings {
             account_id: required(env, "R2_ACCOUNT_ID")?,
             access_key_id: required(env, "R2_ACCESS_KEY_ID")?,
