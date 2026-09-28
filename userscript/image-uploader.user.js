@@ -1,14 +1,11 @@
 // ==UserScript==
 // @name         个人图床上传助手
 // @namespace    imgflare
-// @version      1.0.0
-// @description  在任意网页通过 Ctrl+V、拖拽或文件选择，把图片和文件上传到自建图床。支持 SHA-256 去重、批量上传、自动重试，并自动插入 Markdown。
+// @version      2.0.0
+// @description  在任意网页 Ctrl+V 粘贴或拖入图片，自动上传到自建图床并插入 Markdown。支持 SHA-256 去重、批量上传、失败重试。
 // @author       you
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
-// @grant        GM_getValue
-// @grant        GM_setValue
-// @grant        GM_registerMenuCommand
 // @connect      *
 // @connect      localhost
 // @run-at       document-idle
@@ -17,23 +14,15 @@
 "use strict";
 (() => {
   // userscript/image-uploader.user.ts
-  var SETTINGS_KEY = "pih_settings";
+  var API_URL = "https://img.example.com";
+  var API_TOKEN = "cph_\u5728\u8FD9\u91CC\u586B\u5165\u4F60\u7684Token";
   var MAX_CONCURRENCY = 3;
   var MAX_RETRIES = 2;
-  function loadSettings() {
-    const stored = GM_getValue(SETTINGS_KEY, {});
-    return {
-      apiUrl: (stored?.apiUrl ?? "").replace(/\/+$/, ""),
-      token: stored?.token ?? ""
-    };
-  }
-  function saveSettings(settings) {
-    GM_setValue(SETTINGS_KEY, settings);
-  }
-  function request(settings, path, options = {}) {
+  var IMAGE_EXT = /\.(png|jpe?g|webp|gif|avif|bmp|ico|svg|jxl|heic|heif|tiff?)$/i;
+  function request(path, options = {}) {
     return new Promise((resolve, reject) => {
       const headers = {
-        "X-API-Key": settings.token,
+        "X-API-Key": API_TOKEN,
         Accept: "application/json",
         ...options.headers
       };
@@ -46,9 +35,10 @@
       }
       GM_xmlhttpRequest({
         method: options.method ?? "GET",
-        url: `${settings.apiUrl}${path}`,
+        url: `${apiBase()}${path}`,
         headers,
         data,
+        anonymous: true,
         timeout: 12e4,
         onload: (response) => {
           let payload = null;
@@ -68,9 +58,31 @@
       });
     });
   }
+  function apiBase() {
+    return API_URL.trim().replace(/\/+$/, "");
+  }
+  function configLooksUnset() {
+    const url = apiBase();
+    return !url || url.includes("img.example.com") || !API_TOKEN || API_TOKEN.includes("\u5728\u8FD9\u91CC\u586B\u5165");
+  }
+  function isOwnPanel() {
+    const raw = apiBase();
+    if (!/^https?:\/\//i.test(raw)) return false;
+    try {
+      return new URL(raw).host === window.location.host;
+    } catch {
+      return false;
+    }
+  }
   async function sha256Hex(blob) {
+    const subtle = globalThis.crypto?.subtle;
+    if (!subtle) {
+      throw new Error(
+        "\u5F53\u524D\u9875\u9762\u4E0D\u662F HTTPS\uFF0C\u6D4F\u89C8\u5668\u4E0D\u63D0\u4F9B SHA-256\uFF08crypto.subtle\uFF09\uFF0C\u65E0\u6CD5\u4E0A\u4F20"
+      );
+    }
     const buffer = await blob.arrayBuffer();
-    const digest = await crypto.subtle.digest("SHA-256", buffer);
+    const digest = await subtle.digest("SHA-256", buffer);
     const bytes = new Uint8Array(digest);
     let out = "";
     for (const byte of bytes) {
@@ -78,95 +90,60 @@
     }
     return out;
   }
-  var tasks = [];
+  async function uploadOne(file) {
+    const sha256 = await sha256Hex(file);
+    const check = await request("/api/upload/check", {
+      method: "POST",
+      body: { sha256, size: file.size }
+    });
+    if (check.exists && check.file) return check.file.markdown;
+    let lastError = null;
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
+      if (attempt > 0) await delay(400 * attempt);
+      try {
+        const form = new FormData();
+        form.append("file", file, file.name);
+        const result = await request("/api/upload", {
+          method: "POST",
+          formData: form,
+          headers: { "X-File-SHA256": sha256 }
+        });
+        return result.file.markdown;
+      } catch (error) {
+        lastError = error;
+        const message = error instanceof Error ? error.message : "upload_failed";
+        if (/^(unauthorized|invalid_sha256|checksum_mismatch|file_too_large|unsupported_file_type|missing_file|expected_multipart)/.test(
+          message
+        )) {
+          break;
+        }
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error("upload_failed");
+  }
+  var pending = [];
   var running = 0;
-  var counter = 0;
-  function enqueue(files) {
+  function enqueue(files, target = null) {
     for (const file of files) {
       if (file.size === 0) continue;
-      counter += 1;
-      const supported = /\.(png|jpe?g|webp|gif|avif|bmp|ico|svg|jxl|heic|heif|tiff?)$/i.test(file.name);
-      tasks.push({
-        key: `t${counter}`,
-        file,
-        state: supported ? "pending" : "failed",
-        error: supported ? void 0 : "\u53EA\u652F\u6301\u56FE\u7247\uFF08png\u3001jpg\u3001webp\u3001gif\u3001avif\u3001svg\u3001jxl\u3001heic\u3001tiff \u7B49\uFF09"
-      });
+      pending.push({ file, target });
     }
-    renderQueue();
     pump();
   }
   function pump() {
     while (running < MAX_CONCURRENCY) {
-      const task = tasks.find((t) => t.state === "pending");
-      if (!task) break;
+      const item = pending.shift();
+      if (!item) break;
       running += 1;
-      void process(task).finally(() => {
+      void uploadOne(item.file).then((markdown) => {
+        insertMarkdown(markdown, item.target);
+      }).catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`[imgflare] ${item.file.name} \u4E0A\u4F20\u5931\u8D25\uFF1A${message}`);
+      }).finally(() => {
         running -= 1;
         pump();
       });
-    }
-  }
-  async function process(task) {
-    const settings = loadSettings();
-    if (!settings.apiUrl || !settings.token) {
-      task.state = "failed";
-      task.error = "\u8BF7\u5148\u5728\u8BBE\u7F6E\u4E2D\u586B\u5199 API \u5730\u5740\u548C Token";
-      renderQueue();
-      return;
-    }
-    try {
-      task.state = "hashing";
-      renderQueue();
-      const sha256 = await sha256Hex(task.file);
-      task.state = "checking";
-      renderQueue();
-      const check = await request(settings, "/api/upload/check", {
-        method: "POST",
-        body: { sha256, size: task.file.size }
-      });
-      if (check.exists && check.file) {
-        task.state = "duplicate";
-        task.result = { success: true, deduplicated: true, file: check.file };
-        renderQueue();
-        insertMarkdown(check.file.markdown, settings);
-        return;
-      }
-      let lastError = null;
-      for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
-        task.state = "uploading";
-        renderQueue();
-        try {
-          const form = new FormData();
-          form.append("file", task.file, task.file.name);
-          const result = await request(settings, "/api/upload", {
-            method: "POST",
-            formData: form,
-            headers: { "X-File-SHA256": sha256 }
-          });
-          task.state = "success";
-          task.result = result;
-          renderQueue();
-          insertMarkdown(result.file.markdown, settings);
-          return;
-        } catch (error) {
-          lastError = error;
-          const message = error instanceof Error ? error.message : "upload_failed";
-          if (/^(unauthorized|invalid_sha256|checksum_mismatch|file_too_large|unsupported_file_type|missing_file|expected_multipart)/.test(message)) {
-            break;
-          }
-          if (attempt < MAX_RETRIES) {
-            await delay(400 * (attempt + 1));
-          }
-        }
-      }
-      task.state = "failed";
-      task.error = lastError instanceof Error ? lastError.message : "upload_failed";
-      renderQueue();
-    } catch (error) {
-      task.state = "failed";
-      task.error = error instanceof Error ? error.message : "unknown_error";
-      renderQueue();
     }
   }
   function findEditor() {
@@ -178,7 +155,9 @@
       return active;
     }
     const candidates = Array.from(
-      document.querySelectorAll('textarea, input[type="text"], [contenteditable="true"]')
+      document.querySelectorAll(
+        'textarea, input[type="text"], [contenteditable="true"]'
+      )
     ).filter((node) => node.offsetParent !== null);
     return candidates.length > 0 ? candidates[candidates.length - 1] : null;
   }
@@ -186,13 +165,8 @@
     const type = input.type.toLowerCase();
     return ["text", "search", "url", "email", "tel", ""].includes(type);
   }
-  function insertMarkdown(markdown, settings) {
-    const editor = findEditor();
-    if (!editor) {
-      void copyToClipboard(markdown);
-      notify(`\u5DF2\u590D\u5236\u5230\u526A\u8D34\u677F\uFF1A${markdown}`, "ok");
-      return;
-    }
+  function insertMarkdown(markdown, target) {
+    const editor = target ?? findEditor();
     if (editor instanceof HTMLTextAreaElement || editor instanceof HTMLInputElement) {
       const start = editor.selectionStart ?? editor.value.length;
       const end = editor.selectionEnd ?? start;
@@ -205,13 +179,11 @@
       const caret = start + inserted.length;
       editor.setSelectionRange(caret, caret);
       editor.dispatchEvent(new Event("input", { bubbles: true }));
-    } else if (editor.isContentEditable) {
+    } else if (editor && editor.isContentEditable) {
       editor.focus();
       document.execCommand("insertText", false, markdown);
     }
-    notify("\u5DF2\u63D2\u5165 Markdown", "ok");
     void copyToClipboard(markdown);
-    void settings;
   }
   async function copyToClipboard(text) {
     try {
@@ -219,286 +191,75 @@
     } catch {
     }
   }
-  var PANEL_ID = "pih-panel";
-  function notify(message, kind = "info") {
-    const node = document.createElement("div");
-    node.className = `pih-toast pih-toast-${kind}`;
-    node.textContent = message;
-    panel().appendChild(node);
-    window.setTimeout(() => node.remove(), 3200);
+  function renamePasted(file) {
+    const named = /^image\.(png|jpe?g|gif|webp|bmp|avif|ico|svg|jxl|heic|heif|tiff?)$/i.test(file.name);
+    if (file.name !== "blob" && !named) return file;
+    const ext = (file.type.split("/")[1] ?? "png").replace("jpeg", "jpg");
+    const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[-:]/g, "").replace(/\..+$/, "").replace("T", "-");
+    return new File([file], `pasted-${stamp}.${ext}`, { type: file.type });
   }
-  function panel() {
-    const existing = document.getElementById(PANEL_ID);
-    if (existing) return existing;
-    const root = document.createElement("div");
-    root.id = PANEL_ID;
-    const toggle = document.createElement("button");
-    toggle.className = "pih-toggle";
-    toggle.type = "button";
-    toggle.title = "\u4E2A\u4EBA\u56FE\u5E8A\u4E0A\u4F20\u52A9\u624B";
-    toggle.textContent = "\u2191";
-    toggle.addEventListener("click", () => {
-      root.classList.toggle("pih-open");
-      renderQueue();
-    });
-    const body = document.createElement("div");
-    body.className = "pih-body";
-    const head = document.createElement("div");
-    head.className = "pih-head";
-    head.textContent = "\u4E2A\u4EBA\u56FE\u5E8A\u4E0A\u4F20\u52A9\u624B";
-    const actions = document.createElement("div");
-    actions.className = "pih-actions";
-    const pick = document.createElement("button");
-    pick.className = "pih-btn";
-    pick.type = "button";
-    pick.textContent = "\u9009\u62E9\u6587\u4EF6";
-    pick.addEventListener("click", () => pickFiles());
-    const settingsButton = document.createElement("button");
-    settingsButton.className = "pih-btn pih-btn-ghost";
-    settingsButton.type = "button";
-    settingsButton.textContent = "\u8BBE\u7F6E";
-    settingsButton.addEventListener("click", () => openSettings());
-    const clear = document.createElement("button");
-    clear.className = "pih-btn pih-btn-ghost";
-    clear.type = "button";
-    clear.textContent = "\u6E05\u7A7A";
-    clear.addEventListener("click", () => {
-      for (let i = tasks.length - 1; i >= 0; i -= 1) {
-        const task = tasks[i];
-        if (task.state !== "pending" && task.state !== "uploading") tasks.splice(i, 1);
-      }
-      renderQueue();
-    });
-    actions.append(pick, settingsButton, clear);
-    const hint = document.createElement("p");
-    hint.className = "pih-hint";
-    hint.textContent = "Ctrl+V \u7C98\u8D34\u56FE\u7247 \xB7 \u62D6\u62FD\u56FE\u7247\u5230\u9875\u9762 \xB7 \u652F\u6301\u6279\u91CF";
-    const queue = document.createElement("div");
-    queue.className = "pih-queue";
-    queue.id = "pih-queue";
-    body.append(head, actions, hint, queue);
-    root.append(toggle, body);
-    document.body.appendChild(root);
-    installDropHandlers(root);
-    return root;
-  }
-  function renderQueue() {
-    const queue = document.getElementById("pih-queue");
-    if (!queue) return;
-    queue.replaceChildren(
-      ...tasks.map((task) => {
-        const row = document.createElement("div");
-        row.className = `pih-row pih-state-${task.state}`;
-        const name = document.createElement("span");
-        name.className = "pih-name";
-        name.title = task.file.name;
-        name.textContent = task.file.name;
-        const status = document.createElement("span");
-        status.className = "pih-status";
-        status.textContent = describe(task);
-        row.append(name, status);
-        if (task.state === "success" || task.state === "duplicate") {
-          const link = document.createElement("a");
-          link.href = task.result?.file.url ?? "#";
-          link.target = "_blank";
-          link.rel = "noopener noreferrer";
-          link.className = "pih-link";
-          link.textContent = "\u6253\u5F00";
-          link.addEventListener("click", (event) => event.stopPropagation());
-          row.append(link);
-        }
-        if (task.state === "failed") {
-          const retry = document.createElement("button");
-          retry.className = "pih-btn pih-btn-ghost pih-retry";
-          retry.type = "button";
-          retry.textContent = "\u91CD\u8BD5";
-          retry.addEventListener("click", () => {
-            task.state = "pending";
-            task.error = void 0;
-            renderQueue();
-            pump();
-          });
-          row.append(retry);
-        }
-        return row;
-      })
-    );
-  }
-  function describe(task) {
-    switch (task.state) {
-      case "pending":
-        return "\u7B49\u5F85\u4E2D";
-      case "hashing":
-        return "\u8BA1\u7B97 Hash\u2026";
-      case "checking":
-        return "\u68C0\u67E5\u91CD\u590D\u2026";
-      case "duplicate":
-        return "\u5DF2\u5B58\u5728\uFF0C\u8DF3\u8FC7\u4E0A\u4F20";
-      case "uploading":
-        return "\u4E0A\u4F20\u4E2D\u2026";
-      case "success":
-        return "\u4E0A\u4F20\u6210\u529F";
-      case "failed":
-        return `\u5931\u8D25\uFF1A${task.error ?? "\u672A\u77E5\u9519\u8BEF"}`;
-      default:
-        return "";
+  function imagesFromClipboard(event) {
+    const data = event.clipboardData;
+    if (!data) return [];
+    const out = [];
+    for (const file of Array.from(data.files ?? [])) {
+      if (looksLikeImage(file)) out.push(file);
     }
-  }
-  var dropInstalled = false;
-  function installDropHandlers(root) {
-    if (dropInstalled) return;
-    dropInstalled = true;
-    document.addEventListener("paste", (event) => {
-      const items = event.clipboardData?.items;
-      if (!items) return;
-      const files = [];
-      for (const item of items) {
+    if (out.length === 0) {
+      for (const item of Array.from(data.items ?? [])) {
         if (item.kind !== "file") continue;
         const file = item.getAsFile();
-        if (file) files.push(renamePasted(file));
+        if (file && looksLikeImage(file)) out.push(file);
       }
-      if (files.length > 0) {
-        event.preventDefault();
-        root.classList.add("pih-open");
-        enqueue(files);
-      }
-    });
-    for (const type of ["dragenter", "dragover"]) {
-      document.addEventListener(type, (event) => {
-        event.preventDefault();
-        root.classList.add("pih-dragging");
-        root.classList.add("pih-open");
-      });
     }
-    for (const type of ["dragleave", "dragend"]) {
-      document.addEventListener(type, () => root.classList.remove("pih-dragging"));
+    return out;
+  }
+  function looksLikeImage(file) {
+    if (file.size === 0) return false;
+    if (file.type.startsWith("image/")) return true;
+    return !file.type && IMAGE_EXT.test(file.name);
+  }
+  function installHandlers() {
+    document.addEventListener(
+      "paste",
+      (event) => {
+        const files = imagesFromClipboard(event).map(renamePasted);
+        if (files.length === 0) return;
+        event.preventDefault();
+        event.stopPropagation();
+        enqueue(files, findEditor());
+      },
+      true
+    );
+    for (const type of ["dragenter", "dragover"]) {
+      document.addEventListener(type, (event) => event.preventDefault());
     }
     document.addEventListener("drop", (event) => {
+      const files = Array.from(event.dataTransfer?.files ?? []).filter(looksLikeImage);
+      if (files.length === 0) return;
       event.preventDefault();
-      root.classList.remove("pih-dragging");
-      const files = event.dataTransfer?.files;
-      if (files && files.length > 0) {
-        root.classList.add("pih-open");
-        enqueue(Array.from(files));
-      }
+      enqueue(files);
     });
-  }
-  function pickFiles() {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = ".png,.jpg,.jpeg,.webp,.gif,.avif,.bmp,.ico,.svg,.jxl,.heic,.heif,.tif,.tiff,image/png,image/jpeg,image/webp,image/gif,image/avif,image/bmp,image/x-icon,image/svg+xml,image/jxl,image/heic,image/heif,image/tiff";
-    input.multiple = true;
-    input.style.display = "none";
-    document.body.appendChild(input);
-    input.addEventListener("change", () => {
-      if (input.files && input.files.length > 0) {
-        enqueue(Array.from(input.files));
-      }
-      input.remove();
-    });
-    input.click();
-  }
-  function renamePasted(file) {
-    if (/^image\.(png|jpe?g|gif|webp|bmp|avif|ico|svg|jxl|heic|heif|tiff?)$/i.test(file.name) || file.name === "blob") {
-      const ext = (file.type.split("/")[1] ?? "png").replace("jpeg", "jpg");
-      const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[-:]/g, "").replace(/\..+$/, "").replace("T", "-");
-      return new File([file], `pasted-${stamp}.${ext}`, { type: file.type });
-    }
-    return file;
-  }
-  function openSettings() {
-    const current = loadSettings();
-    const url = window.prompt(
-      "API \u5730\u5740\uFF08\u4F8B\u5982 https://panel.example.com\uFF09\n\n\u5728\u540E\u53F0\u300CAPI Token\u300D\u9875\u9762\u751F\u6210 Token \u540E\u586B\u5165\u4E0B\u4E00\u6B65\u3002",
-      current.apiUrl
-    );
-    if (url === null) return;
-    const token = window.prompt("API Token\uFF08cph_ \u5F00\u5934\uFF09", current.token);
-    if (token === null) return;
-    saveSettings({
-      apiUrl: url.trim().replace(/\/+$/, ""),
-      token: token.trim()
-    });
-    notify("\u8BBE\u7F6E\u5DF2\u4FDD\u5B58", "ok");
-  }
-  var STYLE = `
-#${PANEL_ID} {
-  position: fixed;
-  right: 18px;
-  bottom: 18px;
-  z-index: 2147483000;
-  font: 13px/1.5 system-ui, -apple-system, "Segoe UI", "PingFang SC", sans-serif;
-  color: #1b1f27;
-}
-#${PANEL_ID} .pih-toggle {
-  width: 44px; height: 44px; border-radius: 50%;
-  border: 1px solid #c6ccd8; background: #fff; color: #1b1f27;
-  font-size: 18px; cursor: pointer; box-shadow: 0 2px 10px rgba(0,0,0,.18);
-  display: block; margin-left: auto;
-}
-#${PANEL_ID} .pih-body {
-  display: none; margin-top: 10px; width: 320px; max-width: calc(100vw - 36px);
-  background: #fff; border: 1px solid #dfe3ea; border-radius: 10px;
-  box-shadow: 0 8px 28px rgba(0,0,0,.2); padding: 12px; max-height: 60vh; overflow: auto;
-}
-#${PANEL_ID}.pih-open .pih-body { display: block; }
-#${PANEL_ID}.pih-dragging .pih-body { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,.25); }
-#${PANEL_ID} .pih-head { font-weight: 650; margin-bottom: 8px; }
-#${PANEL_ID} .pih-actions { display: flex; gap: 6px; flex-wrap: wrap; }
-#${PANEL_ID} .pih-btn {
-  padding: 5px 10px; font-size: 12.5px; border-radius: 6px; cursor: pointer;
-  border: 1px solid #c6ccd8; background: #fff; color: #1b1f27;
-}
-#${PANEL_ID} .pih-btn:hover { background: #f2f4f8; }
-#${PANEL_ID} .pih-btn-ghost { border-color: transparent; color: #6b7280; }
-#${PANEL_ID} .pih-hint { margin: 8px 0; font-size: 11.5px; color: #9aa1ae; }
-#${PANEL_ID} .pih-queue { display: flex; flex-direction: column; gap: 5px; }
-#${PANEL_ID} .pih-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
-#${PANEL_ID} .pih-name {
-  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-#${PANEL_ID} .pih-status { font-size: 11.5px; color: #6b7280; white-space: nowrap; }
-#${PANEL_ID} .pih-state-success .pih-status,
-#${PANEL_ID} .pih-state-duplicate .pih-status { color: #15803d; }
-#${PANEL_ID} .pih-state-failed .pih-status { color: #b91c1c; }
-#${PANEL_ID} .pih-link { font-size: 11.5px; color: #2563eb; }
-#${PANEL_ID} .pih-toast {
-  margin-top: 6px; padding: 6px 9px; border-radius: 6px; font-size: 12px;
-  background: #1b1f27; color: #fff; word-break: break-all;
-}
-#${PANEL_ID} .pih-toast-ok { background: #15803d; }
-#${PANEL_ID} .pih-toast-error { background: #b91c1c; }
-
-@media (prefers-color-scheme: dark) {
-  #${PANEL_ID} { color: #e8eaee; }
-  #${PANEL_ID} .pih-toggle,
-  #${PANEL_ID} .pih-body,
-  #${PANEL_ID} .pih-btn { background: #1c1f26; color: #e8eaee; border-color: #3a4150; }
-  #${PANEL_ID} .pih-btn:hover { background: #262a33; }
-}
-`;
-  function injectStyle() {
-    const style = document.createElement("style");
-    style.textContent = STYLE;
-    document.head.appendChild(style);
   }
   function delay(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
   function boot() {
     if (window.top !== window.self) return;
-    injectStyle();
-    panel();
-    GM_registerMenuCommand("\u4E0A\u4F20\u8BBE\u7F6E", () => openSettings());
-    GM_registerMenuCommand("\u6253\u5F00\u4E0A\u4F20\u9762\u677F", () => {
-      panel().classList.add("pih-open");
-      renderQueue();
-    });
-    const settings = loadSettings();
-    if (!settings.apiUrl || !settings.token) {
-      notify("\u8BF7\u5148\u70B9\u51FB\u300C\u8BBE\u7F6E\u300D\u586B\u5199 API \u5730\u5740\u548C Token", "info");
-      panel().classList.add("pih-open");
+    if (configLooksUnset()) {
+      console.error(
+        "[imgflare] \u8FD8\u6CA1\u914D\u7F6E\uFF1A\u8BF7\u6253\u5F00\u811A\u672C\uFF0C\u628A\u9876\u90E8\u7684 API_URL \u548C API_TOKEN \u6539\u6210\u4F60\u81EA\u5DF1\u7684\u503C\u3002"
+      );
+      return;
     }
+    if (!/^https?:\/\//i.test(apiBase())) {
+      console.error(
+        `[imgflare] API_URL \u5FC5\u987B\u4EE5 https:// \u5F00\u5934\uFF0C\u73B0\u5728\u662F\u300C${apiBase()}\u300D\uFF0C\u7C98\u8D34\u4E0D\u4F1A\u4E0A\u4F20\u3002`
+      );
+      return;
+    }
+    if (isOwnPanel()) return;
+    installHandlers();
   }
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", boot);

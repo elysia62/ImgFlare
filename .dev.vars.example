@@ -6,6 +6,10 @@
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=dev-password
 
+# Generate once with `openssl rand -hex 32`; keep it stable across deployments.
+# Never use this placeholder or the old public signing key.
+SESSION_SECRET=YOUR_RANDOM_SESSION_SECRET
+
 # Turnstile test keys — always pass, safe for local development.
 # https://developers.cloudflare.com/turnstile/troubleshooting/testing/
 TURNSTILE_SITE_KEY=1x00000000000000000000AA

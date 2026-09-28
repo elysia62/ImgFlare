@@ -1,4 +1,4 @@
-// Deploy reads the eight account settings from the environment and uploads
+// Deploy reads the account settings from the environment and uploads
 // them with the Worker. Cloudflare's build variables are not Worker bindings,
 // so `wrangler deploy` cannot see values that were only typed on that page.
 //
@@ -13,6 +13,7 @@ import { join } from "node:path";
 export const CONFIG_NAMES = [
   "ADMIN_USERNAME",
   "ADMIN_PASSWORD",
+  "SESSION_SECRET",
   "TURNSTILE_SITE_KEY",
   "TURNSTILE_SECRET",
   "R2_ACCOUNT_ID",
@@ -48,7 +49,9 @@ export function loadConfig(env, dotenvText) {
   for (const name of CONFIG_NAMES) {
     const value = (env[name] ?? file[name] ?? "").trim();
     if (!value) missing.push(name);
-    else values[name] = value;
+    else if (name === "SESSION_SECRET" && (value.length < 32 || value.startsWith("YOUR_") || value.startsWith("imgflare-session-"))) {
+      missing.push(name + "（请生成新的随机密钥，至少 32 字符）");
+    } else values[name] = value;
   }
   return { values, missing };
 }

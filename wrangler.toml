@@ -48,6 +48,7 @@ migrations_dir = "migrations"
 required = [
   "ADMIN_USERNAME",
   "ADMIN_PASSWORD",
+  "SESSION_SECRET",
   "TURNSTILE_SITE_KEY",
   "TURNSTILE_SECRET",
   "R2_ACCOUNT_ID",

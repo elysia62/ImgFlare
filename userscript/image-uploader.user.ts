@@ -1,22 +1,25 @@
 /**
  * 个人图床上传助手 — Tampermonkey / Violentmonkey 用户脚本
  *
- * 功能：
- *   1. Ctrl+V 粘贴图片上传
- *   2. 拖拽文件上传
- *   3. 点击悬浮按钮选择文件
- *   4. 多文件批量上传（最多同时 3 个）
- *   5. 逐个显示上传状态
- *   6. 失败自动重试（最多 2 次）
- *   7. 使用 API Token 认证
- *   8. 浏览器端计算 SHA-256
- *   9. 上传前检查重复，重复则直接复用
- *  10. 获取公开 URL
- *  11. 生成 Markdown（图片用 ![..]，其他文件用 [..]）
- *  12. 把 Markdown 插入到当前聚焦的输入框 / 可编辑区域
+ * ---------------------------------------------------------------------------
+ * 手动配置：只改下面两行，保存即可。
+ * ---------------------------------------------------------------------------
+ *   API_URL   你的图床地址，例如 https://img.example.com
+ *   API_TOKEN 后台「API Token」页生成的、cph_ 开头的 Token
+ *
+ * 用法：在任意网页 Ctrl+V 粘贴图片，或把图片直接拖进页面。
+ * 上传完成后 Markdown 会插入当前光标处，同时留在剪贴板里。
+ *
+ * 设计取舍：
+ *   - 没有悬浮按钮、没有面板、没有提示框；出错只写 `console`。
+ *   - 在你自己的图床域名下完全不运行：后台面板本身就支持粘贴上传，
+ *     两边都拦截的话同一张图会被上传两次。
+ *   - 只在最外层文档运行，不在 iframe 里重复接管粘贴事件。
  *
  * 这个文件是 TypeScript 源码，由 `bun run build:userscript` 编译成同目录下的
  * `image-uploader.user.js`，编译产物可以直接安装，用户无需安装 Node。
+ *
+ * 注意：更新脚本会覆盖你手改的配置，升级前先记下这两行的值。
  */
 
 /* -------------------------------------------------------------------------- */
@@ -26,7 +29,6 @@
 interface GmResponse {
   status: number;
   responseText: string;
-  responseHeaders: string;
 }
 
 interface GmRequestDetails {
@@ -34,30 +36,49 @@ interface GmRequestDetails {
   url: string;
   headers?: Record<string, string>;
   data?: string | FormData;
-  responseType?: 'text' | 'arraybuffer' | 'blob';
   timeout?: number;
+  /**
+   * 不发送目标站点的 cookie。
+   *
+   * 这里只用 `X-API-Key` 认证，不依赖面板登录。即使扩展意外附带 cookie，
+   * 服务端也优先验证显式 Key，并按上传权限处理。
+   */
+  anonymous?: boolean;
   onload?: (response: GmResponse) => void;
   onerror?: (error: unknown) => void;
   ontimeout?: () => void;
 }
 
 declare function GM_xmlhttpRequest(details: GmRequestDetails): void;
-declare function GM_getValue<T>(key: string, defaultValue?: T): T | undefined;
-declare function GM_setValue(key: string, value: unknown): void;
-declare function GM_registerMenuCommand(name: string, callback: () => void): void;
 
 /* -------------------------------------------------------------------------- */
-/* 常量与配置                                                                 */
+/* 配置                                                                       */
 /* -------------------------------------------------------------------------- */
 
-const SETTINGS_KEY = 'pih_settings';
+/**
+ * 图床地址，务必带上 `https://`。
+ *
+ * 手填时最容易漏掉协议头，而 `new URL('img.example.com')` 会直接抛错：
+ * 脚本会把「解析不了」当成「这是自己的面板」而整个停用，表现就是粘贴没反应，
+ * 所以下面 `isOwnPanel()` 对这种情况单独处理。
+ */
+const API_URL = 'https://img.example.com';
+
+/** 后台「API Token」页生成，只显示一次，形如 cph_xxxxxxxx。 */
+const API_TOKEN = 'cph_在这里填入你的Token';
+
+/** 同时上传几个文件。 */
 const MAX_CONCURRENCY = 3;
+
+/** 失败重试次数（不含首次）。 */
 const MAX_RETRIES = 2;
 
-interface Settings {
-  apiUrl: string;
-  token: string;
-}
+/** 扩展名白名单，和服务端接受的一致。 */
+const IMAGE_EXT = /\.(png|jpe?g|webp|gif|avif|bmp|ico|svg|jxl|heic|heif|tiff?)$/i;
+
+/* -------------------------------------------------------------------------- */
+/* 接口类型                                                                   */
+/* -------------------------------------------------------------------------- */
 
 interface FileInfo {
   id: string;
@@ -89,34 +110,22 @@ interface ApiEnvelope<T> {
 }
 
 /* -------------------------------------------------------------------------- */
-/* 设置读写                                                                   */
-/* -------------------------------------------------------------------------- */
-
-function loadSettings(): Settings {
-  const stored = GM_getValue<Partial<Settings>>(SETTINGS_KEY, {});
-  return {
-    apiUrl: (stored?.apiUrl ?? '').replace(/\/+$/, ''),
-    token: stored?.token ?? '',
-  };
-}
-
-function saveSettings(settings: Settings): void {
-  GM_setValue(SETTINGS_KEY, settings);
-}
-
-/* -------------------------------------------------------------------------- */
 /* 网络请求                                                                   */
 /* -------------------------------------------------------------------------- */
 
-/** 统一的 JSON 请求；失败时抛出带 `code` 的错误。 */
+/** 统一的 JSON 请求；失败时抛出带错误码的 `Error`。 */
 function request<T>(
-  settings: Settings,
   path: string,
-  options: { method?: string; body?: unknown; formData?: FormData; headers?: Record<string, string> } = {},
+  options: {
+    method?: string;
+    body?: unknown;
+    formData?: FormData;
+    headers?: Record<string, string>;
+  } = {},
 ): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const headers: Record<string, string> = {
-      'X-API-Key': settings.token,
+      'X-API-Key': API_TOKEN,
       Accept: 'application/json',
       ...options.headers,
     };
@@ -131,9 +140,10 @@ function request<T>(
 
     GM_xmlhttpRequest({
       method: options.method ?? 'GET',
-      url: `${settings.apiUrl}${path}`,
+      url: `${apiBase()}${path}`,
       headers,
       data,
+      anonymous: true,
       timeout: 120_000,
       onload: (response) => {
         let payload: ApiEnvelope<T> | null = null;
@@ -155,13 +165,59 @@ function request<T>(
   });
 }
 
+/** 去掉结尾多余的斜杠。 */
+function apiBase(): string {
+  return API_URL.trim().replace(/\/+$/, '');
+}
+
+/** 配置是否还是占位值。 */
+function configLooksUnset(): boolean {
+  const url = apiBase();
+  return (
+    !url ||
+    url.includes('img.example.com') ||
+    !API_TOKEN ||
+    API_TOKEN.includes('在这里填入')
+  );
+}
+
+/**
+ * 当前页面是否就是自己的图床（面板本身支持粘贴上传，两边都拦会重复上传）。
+ *
+ * 地址写得不合法时**不能**返回 `true`：那会让脚本静默失效，用户只会看到
+ * 「粘贴没反应」。这种情况返回 `false`，让粘贴照常走上传流程，出错时至少
+ * 控制台里有明确日志。
+ */
+function isOwnPanel(): boolean {
+  const raw = apiBase();
+  if (!/^https?:\/\//i.test(raw)) return false;
+  try {
+    return new URL(raw).host === window.location.host;
+  } catch {
+    return false;
+  }
+}
+
 /* -------------------------------------------------------------------------- */
-/* SHA-256                                                                    */
+/* 上传                                                                       */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * 计算 SHA-256。服务端用它查重并校验上传内容，所以这步不能跳过。
+ *
+ * `crypto.subtle` 只在安全上下文（HTTPS 或 localhost）可用；普通 HTTP 页面上
+ * 它是 `undefined`，直接调用只会抛出 `undefined.digest` 这种看不懂的错误。
+ */
 async function sha256Hex(blob: Blob): Promise<string> {
+  const subtle = globalThis.crypto?.subtle;
+  if (!subtle) {
+    throw new Error(
+      '当前页面不是 HTTPS，浏览器不提供 SHA-256（crypto.subtle），无法上传',
+    );
+  }
+
   const buffer = await blob.arrayBuffer();
-  const digest = await crypto.subtle.digest('SHA-256', buffer);
+  const digest = await subtle.digest('SHA-256', buffer);
   const bytes = new Uint8Array(digest);
   let out = '';
   for (const byte of bytes) {
@@ -170,122 +226,89 @@ async function sha256Hex(blob: Blob): Promise<string> {
   return out;
 }
 
-/* -------------------------------------------------------------------------- */
-/* 上传队列                                                                   */
-/* -------------------------------------------------------------------------- */
+/**
+ * 上传一个文件，返回可直接粘贴的 Markdown。
+ *
+ * 先按 SHA-256 查重；已存在就直接复用，不重复占用空间。
+ */
+async function uploadOne(file: File): Promise<string> {
+  const sha256 = await sha256Hex(file);
 
-type State = 'pending' | 'hashing' | 'checking' | 'duplicate' | 'uploading' | 'success' | 'failed';
+  const check = await request<CheckResult>('/api/upload/check', {
+    method: 'POST',
+    body: { sha256, size: file.size },
+  });
+  if (check.exists && check.file) return check.file.markdown;
 
-interface Task {
-  key: string;
-  file: File;
-  state: State;
-  error?: string;
-  result?: UploadResult;
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
+    if (attempt > 0) await delay(400 * attempt);
+    try {
+      const form = new FormData();
+      form.append('file', file, file.name);
+
+      const result = await request<UploadResult>('/api/upload', {
+        method: 'POST',
+        formData: form,
+        headers: { 'X-File-SHA256': sha256 },
+      });
+      return result.file.markdown;
+    } catch (error) {
+      lastError = error;
+      const message = error instanceof Error ? error.message : 'upload_failed';
+      // 这些错误重试也没有意义，直接放弃。
+      if (
+        /^(unauthorized|invalid_sha256|checksum_mismatch|file_too_large|unsupported_file_type|missing_file|expected_multipart)/.test(
+          message,
+        )
+      ) {
+        break;
+      }
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error('upload_failed');
 }
 
-const tasks: Task[] = [];
-let running = 0;
-let counter = 0;
+/* -------------------------------------------------------------------------- */
+/* 队列：同一时间最多上传 MAX_CONCURRENCY 个                                  */
+/* -------------------------------------------------------------------------- */
 
-function enqueue(files: File[]): void {
+const pending: { file: File; target: HTMLElement | null }[] = [];
+let running = 0;
+
+/**
+ * 排队上传。
+ *
+ * `target` 是粘贴发生时用户正在编辑的元素：上传要花时间，等结果回来再去找
+ * `document.activeElement` 可能已经指向别处了，所以在这里先记下来。
+ */
+function enqueue(files: File[], target: HTMLElement | null = null): void {
   for (const file of files) {
     if (file.size === 0) continue;
-    counter += 1;
-    const supported = /\.(png|jpe?g|webp|gif|avif|bmp|ico|svg|jxl|heic|heif|tiff?)$/i.test(file.name);
-    tasks.push({
-      key: `t${counter}`,
-      file,
-      state: supported ? 'pending' : 'failed',
-      error: supported ? undefined : '只支持图片（png、jpg、webp、gif、avif、svg、jxl、heic、tiff 等）',
-    });
+    pending.push({ file, target });
   }
-  renderQueue();
   pump();
 }
 
 function pump(): void {
   while (running < MAX_CONCURRENCY) {
-    const task = tasks.find((t) => t.state === 'pending');
-    if (!task) break;
+    const item = pending.shift();
+    if (!item) break;
     running += 1;
-    void process(task).finally(() => {
-      running -= 1;
-      pump();
-    });
-  }
-}
 
-async function process(task: Task): Promise<void> {
-  const settings = loadSettings();
-  if (!settings.apiUrl || !settings.token) {
-    task.state = 'failed';
-    task.error = '请先在设置中填写 API 地址和 Token';
-    renderQueue();
-    return;
-  }
-
-  try {
-    task.state = 'hashing';
-    renderQueue();
-    const sha256 = await sha256Hex(task.file);
-
-    task.state = 'checking';
-    renderQueue();
-    const check = await request<CheckResult>(settings, '/api/upload/check', {
-      method: 'POST',
-      body: { sha256, size: task.file.size },
-    });
-
-    if (check.exists && check.file) {
-      task.state = 'duplicate';
-      task.result = { success: true, deduplicated: true, file: check.file };
-      renderQueue();
-      insertMarkdown(check.file.markdown, settings);
-      return;
-    }
-
-    // 上传，带有限次重试。
-    let lastError: unknown = null;
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
-      task.state = 'uploading';
-      renderQueue();
-
-      try {
-        const form = new FormData();
-        form.append('file', task.file, task.file.name);
-
-        const result = await request<UploadResult>(settings, '/api/upload', {
-          method: 'POST',
-          formData: form,
-          headers: { 'X-File-SHA256': sha256 },
-        });
-
-        task.state = 'success';
-        task.result = result;
-        renderQueue();
-        insertMarkdown(result.file.markdown, settings);
-        return;
-      } catch (error) {
-        lastError = error;
-        const message = error instanceof Error ? error.message : 'upload_failed';
-        // 4xx（除限流外）重试没有意义。
-        if (/^(unauthorized|invalid_sha256|checksum_mismatch|file_too_large|unsupported_file_type|missing_file|expected_multipart)/.test(message)) {
-          break;
-        }
-        if (attempt < MAX_RETRIES) {
-          await delay(400 * (attempt + 1));
-        }
-      }
-    }
-
-    task.state = 'failed';
-    task.error = lastError instanceof Error ? lastError.message : 'upload_failed';
-    renderQueue();
-  } catch (error) {
-    task.state = 'failed';
-    task.error = error instanceof Error ? error.message : 'unknown_error';
-    renderQueue();
+    void uploadOne(item.file)
+      .then((markdown) => {
+        insertMarkdown(markdown, item.target);
+      })
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`[imgflare] ${item.file.name} 上传失败：${message}`);
+      })
+      .finally(() => {
+        running -= 1;
+        pump();
+      });
   }
 }
 
@@ -296,8 +319,8 @@ async function process(task: Task): Promise<void> {
 /**
  * 找到用户正在编辑的元素。
  *
- * 优先使用 `document.activeElement`，其次查找页面上最后一个可见的编辑区域。
- * 找不到时不强行插入，只提示用户复制。
+ * 优先用 `document.activeElement`，否则退回到页面上最后一个可见的编辑区域。
+ * 都找不到时只放进剪贴板，不强行插入。
  */
 function findEditor(): HTMLTextAreaElement | HTMLInputElement | HTMLElement | null {
   const active = document.activeElement;
@@ -312,9 +335,10 @@ function findEditor(): HTMLTextAreaElement | HTMLInputElement | HTMLElement | nu
     return active;
   }
 
-  // 回退：页面上最后一个文本输入区域。
   const candidates = Array.from(
-    document.querySelectorAll<HTMLElement>('textarea, input[type="text"], [contenteditable="true"]'),
+    document.querySelectorAll<HTMLElement>(
+      'textarea, input[type="text"], [contenteditable="true"]',
+    ),
   ).filter((node) => node.offsetParent !== null);
 
   return candidates.length > 0 ? (candidates[candidates.length - 1] as HTMLElement) : null;
@@ -325,21 +349,15 @@ function isTextInput(input: HTMLInputElement): boolean {
   return ['text', 'search', 'url', 'email', 'tel', ''].includes(type);
 }
 
-function insertMarkdown(markdown: string, settings: Settings): void {
-  const editor = findEditor();
-
-  if (!editor) {
-    void copyToClipboard(markdown);
-    notify(`已复制到剪贴板：${markdown}`, 'ok');
-    return;
-  }
+function insertMarkdown(markdown: string, target: HTMLElement | null): void {
+  const editor = target ?? findEditor();
 
   if (editor instanceof HTMLTextAreaElement || editor instanceof HTMLInputElement) {
     const start = editor.selectionStart ?? editor.value.length;
     const end = editor.selectionEnd ?? start;
     const before = editor.value.slice(0, start);
     const after = editor.value.slice(end);
-    // 前后补空格，避免粘进已有文字的中间。
+    // 前后补空格，避免粘进已有文字中间。
     const prefix = before.length > 0 && !/\s$/.test(before) ? ' ' : '';
     const suffix = after.length > 0 && !/^\s/.test(after) ? ' ' : '';
     const inserted = `${prefix}${markdown}${suffix}`;
@@ -348,357 +366,117 @@ function insertMarkdown(markdown: string, settings: Settings): void {
     const caret = start + inserted.length;
     editor.setSelectionRange(caret, caret);
     editor.dispatchEvent(new Event('input', { bubbles: true }));
-  } else if (editor.isContentEditable) {
+  } else if (editor && editor.isContentEditable) {
     editor.focus();
     document.execCommand('insertText', false, markdown);
   }
 
-  notify('已插入 Markdown', 'ok');
-  // 同时留在剪贴板里，方便手动粘贴到别处。
+  // 无论插没插进去，都留在剪贴板里，方便手动粘贴到别处。
   void copyToClipboard(markdown);
-  void settings;
 }
 
 async function copyToClipboard(text: string): Promise<void> {
   try {
     await navigator.clipboard.writeText(text);
   } catch {
-    // 剪贴板权限被拒绝时静默忽略；UI 上仍然展示了 Markdown。
+    // 剪贴板权限被拒绝时静默忽略。
   }
 }
 
 /* -------------------------------------------------------------------------- */
-/* 界面                                                                       */
+/* 输入方式：粘贴与拖拽                                                       */
 /* -------------------------------------------------------------------------- */
 
-const PANEL_ID = 'pih-panel';
+/**
+ * 粘贴进来的图片常常叫 `image.png` 或 `blob`，补上时间戳和真实扩展名。
+ *
+ * 保留原扩展名会让同一秒内的多张截图互相覆盖记忆，而 `blob` 这种没有扩展名
+ * 的名字又不能直接用来拼公开地址。
+ */
+function renamePasted(file: File): File {
+  const named = /^image\.(png|jpe?g|gif|webp|bmp|avif|ico|svg|jxl|heic|heif|tiff?)$/i.test(file.name);
+  if (file.name !== 'blob' && !named) return file;
 
-function notify(message: string, kind: 'ok' | 'error' | 'info' = 'info'): void {
-  const node = document.createElement('div');
-  node.className = `pih-toast pih-toast-${kind}`;
-  node.textContent = message;
-  panel().appendChild(node);
-  window.setTimeout(() => node.remove(), 3200);
+  const ext = (file.type.split('/')[1] ?? 'png').replace('jpeg', 'jpg');
+  const stamp = new Date()
+    .toISOString()
+    .replace(/[-:]/g, '')
+    .replace(/\..+$/, '')
+    .replace('T', '-');
+  return new File([file], `pasted-${stamp}.${ext}`, { type: file.type });
 }
 
-/** 浮动面板，承载按钮、状态列表和设置。 */
-function panel(): HTMLElement {
-  const existing = document.getElementById(PANEL_ID);
-  if (existing) return existing;
+/**
+ * 从粘贴事件里取出图片。
+ *
+ * 两个来源都要看，顺序也和主流脚本一致：
+ *   1. `clipboardData.files` —— 从系统复制文件（如截图后直接粘贴）时只有这个。
+ *   2. `clipboardData.items` —— 网页里复制图片时用这个。
+ *
+ * 只读 `items` 会漏掉第一种情况，表现就是「粘贴没反应」。
+ * 另外用 MIME 而不是文件名判断类型：粘贴进来的文件常叫 `blob` 或没有扩展名。
+ */
+function imagesFromClipboard(event: ClipboardEvent): File[] {
+  const data = event.clipboardData;
+  if (!data) return [];
 
-  const root = document.createElement('div');
-  root.id = PANEL_ID;
+  const out: File[] = [];
 
-  const toggle = document.createElement('button');
-  toggle.className = 'pih-toggle';
-  toggle.type = 'button';
-  toggle.title = '个人图床上传助手';
-  toggle.textContent = '↑';
-  toggle.addEventListener('click', () => {
-    root.classList.toggle('pih-open');
-    renderQueue();
-  });
-
-  const body = document.createElement('div');
-  body.className = 'pih-body';
-
-  const head = document.createElement('div');
-  head.className = 'pih-head';
-  head.textContent = '个人图床上传助手';
-
-  const actions = document.createElement('div');
-  actions.className = 'pih-actions';
-
-  const pick = document.createElement('button');
-  pick.className = 'pih-btn';
-  pick.type = 'button';
-  pick.textContent = '选择文件';
-  pick.addEventListener('click', () => pickFiles());
-
-  const settingsButton = document.createElement('button');
-  settingsButton.className = 'pih-btn pih-btn-ghost';
-  settingsButton.type = 'button';
-  settingsButton.textContent = '设置';
-  settingsButton.addEventListener('click', () => openSettings());
-
-  const clear = document.createElement('button');
-  clear.className = 'pih-btn pih-btn-ghost';
-  clear.type = 'button';
-  clear.textContent = '清空';
-  clear.addEventListener('click', () => {
-    for (let i = tasks.length - 1; i >= 0; i -= 1) {
-      const task = tasks[i] as Task;
-      if (task.state !== 'pending' && task.state !== 'uploading') tasks.splice(i, 1);
-    }
-    renderQueue();
-  });
-
-  actions.append(pick, settingsButton, clear);
-
-  const hint = document.createElement('p');
-  hint.className = 'pih-hint';
-  hint.textContent = 'Ctrl+V 粘贴图片 · 拖拽图片到页面 · 支持批量';
-
-  const queue = document.createElement('div');
-  queue.className = 'pih-queue';
-  queue.id = 'pih-queue';
-
-  body.append(head, actions, hint, queue);
-  root.append(toggle, body);
-  document.body.appendChild(root);
-
-  // 拖拽整页上传。
-  installDropHandlers(root);
-
-  return root;
-}
-
-function renderQueue(): void {
-  const queue = document.getElementById('pih-queue');
-  if (!queue) return;
-
-  queue.replaceChildren(
-    ...tasks.map((task) => {
-      const row = document.createElement('div');
-      row.className = `pih-row pih-state-${task.state}`;
-
-      const name = document.createElement('span');
-      name.className = 'pih-name';
-      name.title = task.file.name;
-      name.textContent = task.file.name;
-
-      const status = document.createElement('span');
-      status.className = 'pih-status';
-      status.textContent = describe(task);
-
-      row.append(name, status);
-
-      if (task.state === 'success' || task.state === 'duplicate') {
-        const link = document.createElement('a');
-        link.href = task.result?.file.url ?? '#';
-        link.target = '_blank';
-        link.rel = 'noopener noreferrer';
-        link.className = 'pih-link';
-        link.textContent = '打开';
-        link.addEventListener('click', (event) => event.stopPropagation());
-        row.append(link);
-      }
-
-      if (task.state === 'failed') {
-        const retry = document.createElement('button');
-        retry.className = 'pih-btn pih-btn-ghost pih-retry';
-        retry.type = 'button';
-        retry.textContent = '重试';
-        retry.addEventListener('click', () => {
-          task.state = 'pending';
-          task.error = undefined;
-          renderQueue();
-          pump();
-        });
-        row.append(retry);
-      }
-
-      return row;
-    }),
-  );
-}
-
-function describe(task: Task): string {
-  switch (task.state) {
-    case 'pending':
-      return '等待中';
-    case 'hashing':
-      return '计算 Hash…';
-    case 'checking':
-      return '检查重复…';
-    case 'duplicate':
-      return '已存在，跳过上传';
-    case 'uploading':
-      return '上传中…';
-    case 'success':
-      return '上传成功';
-    case 'failed':
-      return `失败：${task.error ?? '未知错误'}`;
-    default:
-      return '';
+  for (const file of Array.from(data.files ?? [])) {
+    if (looksLikeImage(file)) out.push(file);
   }
-}
 
-/* -------------------------------------------------------------------------- */
-/* 输入方式                                                                   */
-/* -------------------------------------------------------------------------- */
-
-let dropInstalled = false;
-
-function installDropHandlers(root: HTMLElement): void {
-  if (dropInstalled) return;
-  dropInstalled = true;
-
-  // Ctrl+V：只在整页监听，且仅处理剪贴板里的文件。
-  document.addEventListener('paste', (event) => {
-    const items = event.clipboardData?.items;
-    if (!items) return;
-
-    const files: File[] = [];
-    for (const item of items) {
+  if (out.length === 0) {
+    for (const item of Array.from(data.items ?? [])) {
       if (item.kind !== 'file') continue;
       const file = item.getAsFile();
-      if (file) files.push(renamePasted(file));
+      if (file && looksLikeImage(file)) out.push(file);
     }
-
-    if (files.length > 0) {
-      event.preventDefault();
-      root.classList.add('pih-open');
-      enqueue(files);
-    }
-  });
-
-  // 拖拽：必须 preventDefault，否则浏览器会直接打开文件。
-  for (const type of ['dragenter', 'dragover'] as const) {
-    document.addEventListener(type, (event) => {
-      event.preventDefault();
-      root.classList.add('pih-dragging');
-      root.classList.add('pih-open');
-    });
   }
-  for (const type of ['dragleave', 'dragend'] as const) {
-    document.addEventListener(type, () => root.classList.remove('pih-dragging'));
+
+  return out;
+}
+
+/**
+ * 这是不是一张可以上传的图片？
+ *
+ * 以 MIME 为主 —— 服务端最终按文件头判断，扩展名只用于拼公开地址，所以这里
+ * 放宽一点，让没有扩展名的粘贴内容也能进到上传流程，由服务端给出明确结论。
+ */
+function looksLikeImage(file: File): boolean {
+  if (file.size === 0) return false;
+  if (file.type.startsWith('image/')) return true;
+  // 少数环境给出空 MIME，退回扩展名判断。
+  return !file.type && IMAGE_EXT.test(file.name);
+}
+
+function installHandlers(): void {
+  document.addEventListener(
+    'paste',
+    (event) => {
+      const files = imagesFromClipboard(event).map(renamePasted);
+      if (files.length === 0) return;
+
+      // 只在这时候才拦截，避免影响正常的文字粘贴。
+      event.preventDefault();
+      event.stopPropagation();
+
+      // 记下此刻的编辑目标；上传完成后焦点可能已经变了。
+      enqueue(files, findEditor());
+    },
+    true,
+  );
+
+  // 拖拽时必须 preventDefault，否则浏览器会直接打开文件。
+  for (const type of ['dragenter', 'dragover'] as const) {
+    document.addEventListener(type, (event) => event.preventDefault());
   }
   document.addEventListener('drop', (event) => {
+    const files = Array.from(event.dataTransfer?.files ?? []).filter(looksLikeImage);
+    if (files.length === 0) return;
     event.preventDefault();
-    root.classList.remove('pih-dragging');
-
-    const files = event.dataTransfer?.files;
-    if (files && files.length > 0) {
-      root.classList.add('pih-open');
-      enqueue(Array.from(files));
-    }
+    enqueue(files);
   });
-}
-
-function pickFiles(): void {
-  const input = document.createElement('input');
-  input.type = 'file';
-  input.accept = '.png,.jpg,.jpeg,.webp,.gif,.avif,.bmp,.ico,.svg,.jxl,.heic,.heif,.tif,.tiff,image/png,image/jpeg,image/webp,image/gif,image/avif,image/bmp,image/x-icon,image/svg+xml,image/jxl,image/heic,image/heif,image/tiff';
-  input.multiple = true;
-  // 留在 DOM 之外也可以触发；部分浏览器要求节点已挂载。
-  input.style.display = 'none';
-  document.body.appendChild(input);
-
-  input.addEventListener('change', () => {
-    if (input.files && input.files.length > 0) {
-      enqueue(Array.from(input.files));
-    }
-    input.remove();
-  });
-
-  input.click();
-}
-
-/** 粘贴进来的图片通常叫 image.png，补上时间戳便于区分。 */
-function renamePasted(file: File): File {
-  if (/^image\.(png|jpe?g|gif|webp|bmp|avif|ico|svg|jxl|heic|heif|tiff?)$/i.test(file.name) || file.name === 'blob') {
-    const ext = (file.type.split('/')[1] ?? 'png').replace('jpeg', 'jpg');
-    const stamp = new Date()
-      .toISOString()
-      .replace(/[-:]/g, '')
-      .replace(/\..+$/, '')
-      .replace('T', '-');
-    return new File([file], `pasted-${stamp}.${ext}`, { type: file.type });
-  }
-  return file;
-}
-
-/* -------------------------------------------------------------------------- */
-/* 设置弹窗                                                                   */
-/* -------------------------------------------------------------------------- */
-
-function openSettings(): void {
-  const current = loadSettings();
-
-  const url = window.prompt(
-    'API 地址（例如 https://panel.example.com）\n\n' +
-      '在后台「API Token」页面生成 Token 后填入下一步。',
-    current.apiUrl,
-  );
-  if (url === null) return;
-
-  const token = window.prompt('API Token（cph_ 开头）', current.token);
-  if (token === null) return;
-
-  saveSettings({
-    apiUrl: url.trim().replace(/\/+$/, ''),
-    token: token.trim(),
-  });
-
-  notify('设置已保存', 'ok');
-}
-
-/* -------------------------------------------------------------------------- */
-/* 样式                                                                       */
-/* -------------------------------------------------------------------------- */
-
-const STYLE = `
-#${PANEL_ID} {
-  position: fixed;
-  right: 18px;
-  bottom: 18px;
-  z-index: 2147483000;
-  font: 13px/1.5 system-ui, -apple-system, "Segoe UI", "PingFang SC", sans-serif;
-  color: #1b1f27;
-}
-#${PANEL_ID} .pih-toggle {
-  width: 44px; height: 44px; border-radius: 50%;
-  border: 1px solid #c6ccd8; background: #fff; color: #1b1f27;
-  font-size: 18px; cursor: pointer; box-shadow: 0 2px 10px rgba(0,0,0,.18);
-  display: block; margin-left: auto;
-}
-#${PANEL_ID} .pih-body {
-  display: none; margin-top: 10px; width: 320px; max-width: calc(100vw - 36px);
-  background: #fff; border: 1px solid #dfe3ea; border-radius: 10px;
-  box-shadow: 0 8px 28px rgba(0,0,0,.2); padding: 12px; max-height: 60vh; overflow: auto;
-}
-#${PANEL_ID}.pih-open .pih-body { display: block; }
-#${PANEL_ID}.pih-dragging .pih-body { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,.25); }
-#${PANEL_ID} .pih-head { font-weight: 650; margin-bottom: 8px; }
-#${PANEL_ID} .pih-actions { display: flex; gap: 6px; flex-wrap: wrap; }
-#${PANEL_ID} .pih-btn {
-  padding: 5px 10px; font-size: 12.5px; border-radius: 6px; cursor: pointer;
-  border: 1px solid #c6ccd8; background: #fff; color: #1b1f27;
-}
-#${PANEL_ID} .pih-btn:hover { background: #f2f4f8; }
-#${PANEL_ID} .pih-btn-ghost { border-color: transparent; color: #6b7280; }
-#${PANEL_ID} .pih-hint { margin: 8px 0; font-size: 11.5px; color: #9aa1ae; }
-#${PANEL_ID} .pih-queue { display: flex; flex-direction: column; gap: 5px; }
-#${PANEL_ID} .pih-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
-#${PANEL_ID} .pih-name {
-  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-#${PANEL_ID} .pih-status { font-size: 11.5px; color: #6b7280; white-space: nowrap; }
-#${PANEL_ID} .pih-state-success .pih-status,
-#${PANEL_ID} .pih-state-duplicate .pih-status { color: #15803d; }
-#${PANEL_ID} .pih-state-failed .pih-status { color: #b91c1c; }
-#${PANEL_ID} .pih-link { font-size: 11.5px; color: #2563eb; }
-#${PANEL_ID} .pih-toast {
-  margin-top: 6px; padding: 6px 9px; border-radius: 6px; font-size: 12px;
-  background: #1b1f27; color: #fff; word-break: break-all;
-}
-#${PANEL_ID} .pih-toast-ok { background: #15803d; }
-#${PANEL_ID} .pih-toast-error { background: #b91c1c; }
-
-@media (prefers-color-scheme: dark) {
-  #${PANEL_ID} { color: #e8eaee; }
-  #${PANEL_ID} .pih-toggle,
-  #${PANEL_ID} .pih-body,
-  #${PANEL_ID} .pih-btn { background: #1c1f26; color: #e8eaee; border-color: #3a4150; }
-  #${PANEL_ID} .pih-btn:hover { background: #262a33; }
-}
-`;
-
-function injectStyle(): void {
-  const style = document.createElement('style');
-  style.textContent = STYLE;
-  document.head.appendChild(style);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -710,22 +488,27 @@ function delay(ms: number): Promise<void> {
 }
 
 function boot(): void {
-  if (window.top !== window.self) return; // 不在 iframe 里运行
-  injectStyle();
-  panel();
+  // 不在 iframe 里运行，避免同一张图被多个文档同时接管粘贴。
+  if (window.top !== window.self) return;
 
-  GM_registerMenuCommand('上传设置', () => openSettings());
-  GM_registerMenuCommand('打开上传面板', () => {
-    panel().classList.add('pih-open');
-    renderQueue();
-  });
-
-  const settings = loadSettings();
-  if (!settings.apiUrl || !settings.token) {
-    // 首次使用时主动引导配置。
-    notify('请先点击「设置」填写 API 地址和 Token', 'info');
-    panel().classList.add('pih-open');
+  if (configLooksUnset()) {
+    console.error(
+      '[imgflare] 还没配置：请打开脚本，把顶部的 API_URL 和 API_TOKEN 改成你自己的值。',
+    );
+    return;
   }
+
+  if (!/^https?:\/\//i.test(apiBase())) {
+    console.error(
+      `[imgflare] API_URL 必须以 https:// 开头，现在是「${apiBase()}」，粘贴不会上传。`,
+    );
+    return;
+  }
+
+  // 自己的图床有完整的后台上传界面，这里让位，否则粘贴会被上传两次。
+  if (isOwnPanel()) return;
+
+  installHandlers();
 }
 
 if (document.readyState === 'loading') {

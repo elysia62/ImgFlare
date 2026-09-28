@@ -49,7 +49,7 @@ pub async fn route(req: Request, env: Env, _ctx: worker::Context) -> Result<Resp
         // else is bounced to the login form before a single byte of the panel
         // markup is sent.
         (worker::Method::Get, []) | (worker::Method::Get, ["index.html"]) => {
-            if auth::has_valid_session(&req) {
+            if auth::has_valid_session(&req, &env) {
                 render_page(&env, &cfg, "/index.html", false).await
             } else {
                 Ok(redirect_to("/login"))
@@ -227,7 +227,7 @@ async fn handle_login(mut req: Request, env: &Env, cfg: &Config) -> ApiResult<Re
 
     auth::clear_login_failures(&db, ip.as_deref()).await?;
 
-    let cookie = auth::create_session()?;
+    let cookie = auth::create_session(env)?;
 
     let mut resp = response::ok(serde_json::json!({ "authenticated": true }));
     resp.headers_mut()
@@ -252,7 +252,7 @@ fn handle_logout(req: Request, cfg: &Config) -> ApiResult<Response> {
 /// page, and to learn whether the caller may delete files.
 async fn handle_me(req: Request, env: &Env) -> ApiResult<Response> {
     let db = Db::from_env(env)?;
-    match auth::authenticate(&req, &db).await {
+    match auth::authenticate(&req, env, &db).await {
         Ok(principal) => Ok(response::ok(serde_json::json!({
             "authenticated": true,
             "admin": principal.is_admin(),
@@ -281,7 +281,7 @@ async fn handle_upload_check(mut req: Request, env: &Env, cfg: &Config) -> ApiRe
     let db = Db::from_env(env)?;
 
     // Both a session and a token may call check — the userscript uses a token.
-    let principal = auth::authenticate(&req, &db).await?;
+    let principal = auth::authenticate(&req, env, &db).await?;
 
     // CSRF applies only to cookie-authenticated callers.
     if principal.is_admin() {
@@ -308,7 +308,7 @@ async fn handle_upload_check(mut req: Request, env: &Env, cfg: &Config) -> ApiRe
 
 async fn handle_upload(mut req: Request, env: &Env, cfg: &Config) -> ApiResult<Response> {
     let db = Db::from_env(env)?;
-    let principal = auth::authenticate(&req, &db).await?;
+    let principal = auth::authenticate(&req, env, &db).await?;
 
     if principal.is_admin() {
         auth::check_origin(&req, cfg)?;
@@ -344,7 +344,7 @@ async fn handle_upload(mut req: Request, env: &Env, cfg: &Config) -> ApiResult<R
 
 async fn handle_list_files(req: Request, env: &Env) -> ApiResult<Response> {
     let db = Db::from_env(env)?;
-    auth::require_admin(&req, &db).await?;
+    auth::require_admin(&req, env, &db).await?;
 
     let query: files::ListQuery = req.query().unwrap_or(files::ListQuery {
         q: None,
@@ -362,7 +362,7 @@ async fn handle_get_file(
     id: &str,
 ) -> ApiResult<Response> {
     let db = Db::from_env(env)?;
-    auth::require_admin(&req, &db).await?;
+    auth::require_admin(&req, env, &db).await?;
 
     let file = files::handle_get(&db, &current_origin(&req)?, id).await?;
     Ok(response::ok(file))
@@ -377,7 +377,7 @@ async fn handle_delete_file(
     let db = Db::from_env(env)?;
 
     // Deletion is admin-only: an API token cannot destroy data.
-    auth::require_admin(&req, &db).await?;
+    auth::require_admin(&req, env, &db).await?;
     auth::check_origin(&req, cfg)?;
 
     files::handle_delete(&crate::r2::R2::new(&cfg.r2), &db, id).await?;
@@ -390,7 +390,7 @@ async fn handle_delete_file(
 
 async fn handle_list_tokens(req: Request, env: &Env) -> ApiResult<Response> {
     let db = Db::from_env(env)?;
-    auth::require_admin(&req, &db).await?;
+    auth::require_admin(&req, env, &db).await?;
 
     let list = tokens::handle_list(&db).await?;
     Ok(response::ok(list))
@@ -398,7 +398,7 @@ async fn handle_list_tokens(req: Request, env: &Env) -> ApiResult<Response> {
 
 async fn handle_create_token(mut req: Request, env: &Env) -> ApiResult<Response> {
     let db = Db::from_env(env)?;
-    auth::require_admin(&req, &db).await?;
+    auth::require_admin(&req, env, &db).await?;
 
     let cfg = Config::from_env(env)?;
     auth::check_origin(&req, &cfg)?;
@@ -414,7 +414,7 @@ async fn handle_create_token(mut req: Request, env: &Env) -> ApiResult<Response>
 
 async fn handle_delete_token(req: Request, env: &Env, id: &str) -> ApiResult<Response> {
     let db = Db::from_env(env)?;
-    auth::require_admin(&req, &db).await?;
+    auth::require_admin(&req, env, &db).await?;
 
     let cfg = Config::from_env(env)?;
     auth::check_origin(&req, &cfg)?;
@@ -429,7 +429,7 @@ async fn handle_delete_token(req: Request, env: &Env, id: &str) -> ApiResult<Res
 
 async fn handle_download_backup(req: Request, env: &Env, cfg: &Config) -> ApiResult<Response> {
     let db = Db::from_env(env)?;
-    auth::require_admin(&req, &db).await?;
+    auth::require_admin(&req, env, &db).await?;
 
     let bytes = backup::download_latest(&crate::r2::R2::new(&cfg.r2)).await?;
 
@@ -453,7 +453,7 @@ async fn handle_download_backup(req: Request, env: &Env, cfg: &Config) -> ApiRes
 
 async fn handle_backup_status(req: Request, env: &Env, cfg: &Config) -> ApiResult<Response> {
     let db = Db::from_env(env)?;
-    auth::require_admin(&req, &db).await?;
+    auth::require_admin(&req, env, &db).await?;
 
     let status = backup::read_status(&crate::r2::R2::new(&cfg.r2)).await?;
     // Field names must match `BackupStatus` in frontend/src/types.ts exactly.
@@ -470,7 +470,7 @@ async fn handle_backup_status(req: Request, env: &Env, cfg: &Config) -> ApiResul
 
 async fn handle_run_backup(req: Request, env: &Env, cfg: &Config) -> ApiResult<Response> {
     let db = Db::from_env(env)?;
-    auth::require_admin(&req, &db).await?;
+    auth::require_admin(&req, env, &db).await?;
     auth::check_origin(&req, cfg)?;
 
     let report = backup::run_backup_with_retries(env, cfg).await?;

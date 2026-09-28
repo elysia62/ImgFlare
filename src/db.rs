@@ -46,12 +46,39 @@ impl Db {
         Ok(Self { inner })
     }
 
-    /// Export the whole database as SQL.
-    ///
-    /// This is the runtime's own export path, so it needs no account-wide API
-    /// token — the D1 binding is already scoped to exactly this database.
-    pub async fn dump(&self) -> ApiResult<Vec<u8>> {
-        self.inner.dump().await.map_err(ApiError::from)
+    /// Export the known application schema and a consistent snapshot of its data.
+    /// D1's legacy dump API only supports alpha databases and emits SQLite bytes.
+    pub async fn export_sql(&self) -> ApiResult<Vec<u8>> {
+        const MAX_DATA_BYTES: u32 = 8 * 1024 * 1024;
+        const MAX_ROWS: u32 = 20_000;
+        #[derive(Deserialize)]
+        struct SqlRow {
+            statement: Option<String>,
+        }
+
+        let result = self
+            .prepare(include_str!("backup.sql"))
+            .bind(&[
+                JsValue::from_f64(MAX_DATA_BYTES as f64),
+                JsValue::from_f64(MAX_ROWS as f64),
+            ])?
+            .all()
+            .await?;
+        if !result.success() {
+            return Err(ApiError::Internal("D1 SQL export failed".into()));
+        }
+        let rows: Vec<SqlRow> = result.results()?;
+        let mut sql = String::from("-- ImgFlare application backup. Restore into an empty database.\n");
+        sql.push_str(include_str!("../migrations/init_01.sql"));
+        sql.push('\n');
+        for row in rows {
+            let statement = row.statement.ok_or_else(|| ApiError::Internal(
+                "backup exceeds 8 MiB of SQL data or 20000 rows; use wrangler d1 export".into(),
+            ))?;
+            sql.push_str(&statement);
+            sql.push('\n');
+        }
+        Ok(sql.into_bytes())
     }
 
     /// Build a statement. The SQL string here is always a constant.

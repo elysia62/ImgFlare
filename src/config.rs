@@ -1,7 +1,7 @@
 //! Configuration read from the Worker environment.
 //!
 //! Defaults that are the same for every install are in code.
-//! Account values — Turnstile, admin login, and the R2 access key — are typed
+//! Account values — Turnstile, admin login, session signing and R2 keys — are typed
 //! on Cloudflare's create-project page and are not in git.
 
 use crate::error::{ApiError, ApiResult};
@@ -13,9 +13,6 @@ pub const MAX_UPLOAD_SIZE: usize = 52_428_800;
 /// Session cookie lifetime. 7 days. Not a Cloudflare variable.
 pub const SESSION_TTL_SECONDS: i64 = 604_800;
 
-/// Session cookie HMAC key. Not a Cloudflare variable.
-pub const SESSION_SECRET: &str =
-    "imgflare-session-7f3c9a1e6b2d48c0a5e7f91b3d6c8a0e4f2b7d9c1a6e8b0d";
 #[derive(Clone)]
 pub struct R2Settings {
     pub account_id: String,
@@ -98,4 +95,15 @@ fn bucket_name(env: &Env, key: &'static str) -> ApiResult<String> {
         )));
     }
     Ok(name)
+}
+
+/// A per-deployment signing secret. Public or placeholder keys fail closed.
+pub fn session_secret(env: &Env) -> ApiResult<String> {
+    let key = secret(env, "SESSION_SECRET")?;
+    if key.trim().len() < 32 || key.starts_with("YOUR_") || key.starts_with("imgflare-session-") {
+        return Err(ApiError::Internal(
+            "SESSION_SECRET must be a new random secret of at least 32 characters".into(),
+        ));
+    }
+    Ok(key)
 }

@@ -69,8 +69,8 @@ struct SessionPayload {
 }
 
 /// Issue a fresh session cookie value.
-pub fn create_session() -> ApiResult<String> {
-    let secret = crate::config::SESSION_SECRET;
+pub fn create_session(env: &Env) -> ApiResult<String> {
+    let secret = crate::config::session_secret(env)?;
     let now = now_ms();
 
     let payload = SessionPayload {
@@ -92,8 +92,8 @@ pub fn create_session() -> ApiResult<String> {
 
 /// Verify a cookie value. Returns `Ok(())` when the signature is valid and the
 /// session has not expired.
-pub fn verify_session(cookie_value: &str) -> ApiResult<()> {
-    let secret = crate::config::SESSION_SECRET;
+pub fn verify_session(cookie_value: &str, env: &Env) -> ApiResult<()> {
+    let secret = crate::config::session_secret(env)?;
 
     let (payload_b64, sig_b64) = cookie_value
         .split_once('.')
@@ -111,7 +111,12 @@ pub fn verify_session(cookie_value: &str) -> ApiResult<()> {
     let payload: SessionPayload =
         serde_json::from_slice(&payload_json).map_err(|_| ApiError::Unauthorized)?;
 
-    if payload.exp < now_ms() {
+    let now = now_ms();
+    if payload.exp <= now
+        || payload.iat > now + 60_000
+        || payload.exp <= payload.iat
+        || payload.exp.saturating_sub(payload.iat) > crate::config::SESSION_TTL_SECONDS * 1000
+    {
         return Err(ApiError::Unauthorized);
     }
 
@@ -144,9 +149,9 @@ fn session_cookie_from_request(req: &Request) -> Option<String> {
 }
 
 /// Does this request carry a valid session cookie?
-pub fn has_valid_session(req: &Request) -> bool {
+pub fn has_valid_session(req: &Request, env: &Env) -> bool {
     match session_cookie_from_request(req) {
-        Some(v) => verify_session(&v).is_ok(),
+        Some(v) => verify_session(&v, env).is_ok(),
         None => false,
     }
 }
@@ -157,29 +162,33 @@ pub fn has_valid_session(req: &Request) -> bool {
 
 /// Resolve who is calling.
 ///
-/// A valid session cookie wins. Otherwise an `X-API-Key` header is checked
-/// against the hashed token table.
-pub async fn authenticate(req: &Request, db: &Db) -> ApiResult<Principal> {
-    if has_valid_session(req) {
-        return Ok(Principal::Admin);
+/// An explicitly presented API token wins over the session cookie.
+///
+/// The order matters for non-browser clients. A userscript's request can carry
+/// the panel's cookies *and* an `X-API-Key` header, because the extension sends
+/// the target domain's cookies by default. If the cookie were resolved first,
+/// the request would count as an admin session and be subjected to the CSRF
+/// `Origin` check — which such clients do not satisfy — so a perfectly valid
+/// token would be rejected with `missing_origin`.
+///
+/// Preferring the token is safe: the CSRF check exists to stop a hostile page
+/// from riding the user's session, and a hostile page cannot set `X-API-Key`
+/// (that needs a CORS preflight this Worker never approves) nor obtain a token.
+pub async fn authenticate(req: &Request, env: &Env, db: &Db) -> ApiResult<Principal> {
+    if let Some(token) = req.headers().get("X-API-Key")? {
+        return verify_api_token(db, &token).await;
     }
 
-    if let Some(token) = req
-        .headers()
-        .get("X-API-Key")
-        .ok()
-        .flatten()
-        .filter(|t| !t.is_empty())
-    {
-        return verify_api_token(db, &token).await;
+    if has_valid_session(req, env) {
+        return Ok(Principal::Admin);
     }
 
     Err(ApiError::Unauthorized)
 }
 
 /// Authenticate for admin-only operations.
-pub async fn require_admin(req: &Request, db: &Db) -> ApiResult<Principal> {
-    let principal = authenticate(req, db).await?;
+pub async fn require_admin(req: &Request, env: &Env, db: &Db) -> ApiResult<Principal> {
+    let principal = authenticate(req, env, db).await?;
     if !principal.is_admin() {
         return Err(ApiError::Forbidden("admin_only"));
     }
@@ -191,7 +200,7 @@ pub async fn require_admin(req: &Request, db: &Db) -> ApiResult<Principal> {
 /// Only `SHA-256(token)` is stored, so a database leak does not reveal tokens.
 pub async fn verify_api_token(db: &Db, presented: &str) -> ApiResult<Principal> {
     // Cheap shape check before touching D1.
-    if !presented.starts_with("cph_") || presented.len() < 20 {
+    if !is_plausible_token(presented) {
         return Err(ApiError::Unauthorized);
     }
 

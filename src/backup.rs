@@ -1,20 +1,12 @@
-//! Daily D1 backup: D1 → SQL dump → `back/latest.sql` in the image bucket.
-//!
-//! Design rules, in order of importance:
-//!
-//! 1. **Never destroy a good backup.** The existing `back/latest.sql` is only
-//!    replaced once a brand new dump has been produced, verified and uploaded
-//!    successfully. Any failure leaves the old object untouched.
-//! 2. **Only one backup file ever exists.** No dated files, no history, no
-//!    listing — just `back/latest.sql`.
-//! 3. The dump itself comes from the D1 binding (`D1Database::dump`). The SQL
-//!    file is written with the same R2 access key used for images.
+//! Daily logical backup of the three D1 application tables to R2.
+//! One read query takes a consistent snapshot; data is encoded as restorable SQL.
+//! R2 validates SHA-256 and atomically replaces latest.sql after the PUT completes.
 
 use crate::config::Config;
 use crate::db::Db;
 use crate::error::{ApiError, ApiResult};
 use crate::r2::{PutOptions, R2};
-use crate::utils::{now_ms, random_token, sha256_hex};
+use crate::utils::{now_ms, sha256_hex};
 use worker::Env;
 
 /// Where the single backup object lives.
@@ -35,22 +27,22 @@ pub struct BackupReport {
 ///
 /// Returns `Ok(report)` only when a verified SQL dump is sitting at
 /// `back/latest.sql` in the image bucket.
-pub async fn run_backup(env: &Env, _cfg: &Config) -> ApiResult<BackupReport> {
+pub async fn run_backup(env: &Env, cfg: &Config) -> ApiResult<BackupReport> {
     // --- 1. Produce the dump ----------------------------------------------
     let db = Db::from_env(env)?;
     let sql = db
-        .dump()
+        .export_sql()
         .await
-        .map_err(|e| ApiError::Internal(format!("D1 dump failed: {e}")))?;
+        .map_err(|e| ApiError::Internal(format!("D1 SQL export failed: {e}")))?;
 
     if sql.is_empty() {
-        return Err(ApiError::Internal("D1 dump produced an empty file".into()));
+        return Err(ApiError::Internal("D1 SQL export produced an empty file".into()));
     }
 
     let sha256 = sha256_hex(&sql);
     let size = sql.len() as u64;
 
-    let r2 = R2::new(&_cfg.r2);
+    let r2 = R2::new(&cfg.r2);
     let bucket = r2.bucket.clone();
     let metadata = vec![
         ("backup-type".to_string(), "d1".to_string()),
@@ -64,10 +56,8 @@ pub async fn run_backup(env: &Env, _cfg: &Config) -> ApiResult<BackupReport> {
         metadata: metadata.clone(),
     };
 
-    let tmp_key = format!("back/.tmp/latest-{}.sql", random_token(16));
-    r2.put(&bucket, &tmp_key, &sql, opts()).await?;
+    // A single checksum-verified PUT is atomic; no temporary object can leak.
     r2.put(&bucket, LATEST_KEY, &sql, opts()).await?;
-    let _ = r2.delete(&bucket, &tmp_key).await;
 
     // Rate-limit counters are only meaningful for a 15-minute window; sweeping
     // them once a day keeps `kv_meta` from accumulating dead keys. Best effort:

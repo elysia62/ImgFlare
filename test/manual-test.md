@@ -8,7 +8,7 @@
 下面这些不需要真实部署，本地几秒钟就能跑完。**它们通过之后再动手做后面的手工验证**——能省掉大量在浏览器和 curl 之间来回折腾的时间。
 
 ```bash
-bun run verify          # 类型检查 + API 契约检查 + 全量构建
+bun run verify          # 类型检查 + API 契约检查 + 全量构建 + Worker 集成测试
 ```
 
 其中 `verify` 包含两道专门用来拦住「两边都能编译、但运行时会坏」的检查：
@@ -381,29 +381,19 @@ bunx wrangler dev --test-scheduled
 curl "http://localhost:8787/__scheduled?cron=0+4+*+*+*"
 ```
 
-**期望**：Worker 日志出现
+**期望**：后台备份状态的时间与校验值更新，R2 的 `back/latest.sql` 是完整 SQL 文本。失败时日志会出现 `scheduled backup failed`，并带具体原因。
 
-```text
-D1 backup started
-D1 export started
-D1 export polling
-D1 backup uploaded (size=... sha256=... at=...)
-```
-
-线上也可以直接点后台「立即备份」，走同一套代码路径。
+线上也可以直接点后台「立即备份」，走同一套代码路径。本地测试命令 `bun run test:integration` 会调用真正的 Cron 入口，并检查模拟 R2 确实收到新备份。
 
 ---
 
-## 26. D1 dump
+## 26. SQL 导出与恢复
 
-`dump()` 走的是 D1 binding 自带的导出，不需要任何 Cloudflare API Token。
+通过 D1 单次查询读取 `files`、`api_tokens`、`kv_meta` 的一致快照，不依赖旧 Alpha `dump()`，也不需要 Cloudflare API Token。
 
-**期望**：日志出现 `D1 backup started` 与 `D1 backup uploaded (size=... sha256=...)`。
+**期望**：下载的 SQL 能导入一个空数据库，三张表内容与备份时一致，包括中文、引号、换行、空值。恢复不包含 Worker 密钥与 R2 图片内容。
 
-**若失败**，检查 Logs 里的具体错误（`ApiError` 的详细原因只写日志、不返回给客户端）。
-
-> 本地 `wrangler dev` 下 `dump()` 固定返回 404 —— miniflare 未实现 D1 导出。
-> 这一条必须在线上验证。
+自动导出超过 20,000 行或 SQL 数据语句超过 8 MiB 时应失败，旧备份保留；使用 Wrangler 导出或 Time Travel 处理更大数据库。
 
 ---
 
@@ -508,3 +498,12 @@ code=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$ORIGIN/api/files/$id" 
 
 echo "全部通过"
 ```
+
+
+## 31. 会话密钥和脚本独立认证
+
+- 配置随机 `SESSION_SECRET` 后，正常登录应签发有效 Cookie；旧公开签名密钥生成的 Cookie 必须返回 401。
+- 更换 `SESSION_SECRET` 后，已有 Cookie 必须失效；重新登录可用，原有 API Key 仍可上传。
+- 退出面板后，油猴仍能仅凭 API Key 上传和查重。
+- 请求同时携带 Cookie 和有效 Key 时，按 Key 权限处理，不要求 Origin；Key 无效时不能回退到 Cookie。
+- Key 不得列出/删除图片、管理 Token、下载/触发备份。

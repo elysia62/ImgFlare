@@ -22,8 +22,9 @@
     "dev:cron": "bun run build:assets && bunx wrangler dev --test-scheduled",
     "db:migrate:local": "bunx wrangler d1 migrations apply DB --local",
     "db:migrate:remote": "bunx wrangler d1 migrations apply DB --remote",
-    "verify": "bun run typecheck && bun run check:contract && bun run build",
-    "clean": "rm -rf dist build target userscript/image-uploader.user.js"
+    "verify": "bun run typecheck && bun run check:contract && bun run build && node test/integration.mjs",
+    "clean": "rm -rf dist build target userscript/image-uploader.user.js",
+    "test:integration": "bun run build && node test/integration.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250109.0",

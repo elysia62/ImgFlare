@@ -1,14 +1,11 @@
 // ==UserScript==
 // @name         个人图床上传助手
 // @namespace    imgflare
-// @version      1.0.0
-// @description  在任意网页通过 Ctrl+V、拖拽或文件选择，把图片和文件上传到自建图床。支持 SHA-256 去重、批量上传、自动重试，并自动插入 Markdown。
+// @version      2.0.0
+// @description  在任意网页 Ctrl+V 粘贴或拖入图片，自动上传到自建图床并插入 Markdown。支持 SHA-256 去重、批量上传、失败重试。
 // @author       you
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
-// @grant        GM_getValue
-// @grant        GM_setValue
-// @grant        GM_registerMenuCommand
 // @connect      YOUR-WORKER-HOST
 // @run-at       document-idle
 // ==/UserScript==

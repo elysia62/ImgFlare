@@ -13,7 +13,7 @@
 | 去重 | 浏览器 SHA-256 + R2 checksum + D1 唯一索引 |
 | 备份 | 每日 Cron，D1 → SQL → 同一个桶的 `back/latest.sql` |
 
-一个域名。图片公开可读，其余操作一律需要登录。
+一个域名。图片公开可读；面板使用用户名、密码和 Turnstile 登录，油猴脚本独立使用 API Key 上传，无需登录面板。
 
 不使用 KV、Redis、Queue、Durable Objects。
 
@@ -77,7 +77,7 @@ Bun 不支持版本文件覆盖，只能通过这个环境变量。`package.json
 
 > 以后改动依赖后，本地也要用同一版本跑 `bun install`，否则锁文件版本号会和构建环境对不上。
 
-`bun run deploy` 会读取上面这 8 个环境变量，写进 Worker，再执行 `wrangler d1 migrations apply DB --remote`。`BUN_VERSION` 只用于构建，不会写进 Worker。
+`bun run deploy` 会读取下面这 9 个环境变量，写进 Worker，再执行 `wrangler d1 migrations apply DB --remote`。`BUN_VERSION` 只用于构建，不会写进 Worker。
 
 ### 3. 创建页
 
@@ -89,6 +89,7 @@ D1 名字保持 `imgflare-db`，位置 `Automatic`，不要勾读取复制。
 |---|---|---|
 | 管理员用户名 | `ADMIN_USERNAME` | 否 |
 | 管理员密码 | `ADMIN_PASSWORD` | 是 |
+| 会话签名密钥 | `SESSION_SECRET` | 是 |
 | Turnstile Site Key | `TURNSTILE_SITE_KEY` | 否 |
 | Turnstile Secret Key | `TURNSTILE_SECRET` | 是 |
 | R2 Account ID | `R2_ACCOUNT_ID` | 否 |
@@ -96,7 +97,9 @@ D1 名字保持 `imgflare-db`，位置 `Automatic`，不要勾读取复制。
 | R2 的 Secret Access Key | `R2_SECRET_ACCESS_KEY` | 是 |
 | R2 桶名 | `R2_BUCKET` | 否 |
 
-上传上限 50 MB、登录有效期 7 天、会话密钥写在代码里，不用填。
+上传上限 50 MB、登录有效期 7 天。
+
+`SESSION_SECRET` 必须为每个部署单独生成的随机密钥（至少 32 字符）。可用 `openssl rand -hex 32` 生成一次，保存到构建密钥中；后续部署保持不变。升级到此版本时必须补上这个配置，原有 Cookie 会失效，需要重新登录；API Token 不受影响。不要沿用旧版写在代码里的密钥。更换 `SESSION_SECRET` 可让所有已签发的面板会话失效。
 
 R2 桶要自己先建好。不要开公共访问。
 
@@ -240,7 +243,7 @@ API Token 不能删除图片。
 
 不要给 R2 桶开公共访问。图片只从 Worker 的 `/i/` 出去，`back/latest.sql` 不在这条路径上。
 
-写操作比对 `Origin` 和请求自己的 host。未登录访问 `/` 会 `302` 到 `/login`。面板 CSP 只放行本站和 Turnstile。
+面板 Cookie 的写操作比对 `Origin` 和请求自己的 host。显式携带 `X-API-Key` 时只验证该 Key，不回退到 Cookie；Key 仅允许上传、查重和查询自身身份，不授予管理权限。未登录访问 `/` 会 `302` 到 `/login`。面板 CSP 只放行本站和 Turnstile。
 
 ---
 
@@ -248,12 +251,28 @@ API Token 不能删除图片。
 
 编译产物在 [`userscript/image-uploader.user.js`](userscript/image-uploader.user.js)，可直接安装。
 
-安装后点脚本菜单 → **设置**，填：
+安装后**改脚本里顶部的两行配置**，保存即可（没有设置菜单，也没有悬浮按钮）：
 
-- **API 地址**：Worker 域名，或你绑定的域名
-- **Token**：在后台「API Token」页生成
+```js
+const API_URL = 'https://你的域名';
+const API_TOKEN = 'cph_在后台生成的Token';
+```
 
-功能：`Ctrl+V` 粘贴上传、拖拽上传、批量上传（最多 3 并发）、失败重试 2 次、自动插入 Markdown。
+- `API_URL`：**必须带 `https://`**，Worker 域名或你绑定的域名都行，结尾不要带斜杠。
+- `API_TOKEN`：在后台「API Token」页生成，明文只显示一次。
+
+用法：在任意网页 `Ctrl+V` 粘贴图片，或把图片拖进页面。上传完成后 Markdown 会插入当前光标处，同时留在剪贴板里。同一时间最多上传 3 个，失败自动重试 2 次。
+
+行为说明：
+
+- 脚本通过 `X-API-Key` 认证并设置 `anonymous: true`，不发送 Cookie，也不需要先登录面板。
+- 没有悬浮面板、没有提示框。出错只在浏览器控制台写一条 `[imgflare]` 日志。
+- 在你的图床域名下脚本不会生效：后台本身支持粘贴上传，两边都拦截会重复上传。
+- 只在最外层文档运行，不在 iframe 里重复接管。
+- 页面必须是安全上下文（HTTPS 或 localhost）。普通 HTTP 页面浏览器不提供 `crypto.subtle`，算不了 SHA-256，会明确报错而不是静默失败。
+- 配置没写好时不会静默失效，控制台会说明原因（缺 `https://`、还是占位值）。
+
+> 升级脚本会覆盖你手改的这两行，更新前先记下配置。
 
 改源码后重新编译：
 
@@ -268,20 +287,22 @@ bun run build:userscript
 每天 04:00 UTC 触发 `scheduled()`：
 
 ```text
-D1 binding dump() → 校验 SHA-256 → 写 back/.tmp/... → 覆盖 back/latest.sql → 删临时对象
+D1 单次查询取得三张业务表的一致快照 → SQL 文本 → R2 校验 SHA-256 → 原子写入 back/latest.sql
 ```
 
 写在图片同一个桶里，凭证就是上面那把访问密钥。公开地址只读 `/i/<id>.<ext>`，读不到 `back/`。不要给这个桶开 R2 公共访问。
 
-1. 新备份上传成功后才覆盖 `back/latest.sql`。失败时旧文件不动。
+1. R2 完整接收并校验新文件后才原子替换 `back/latest.sql`，不会出现半份备份。导出失败或 R2 拒绝写入时保留旧文件。
 2. 只留这一个备份。
-3. 失败重试 3 次。
+3. 总共最多尝试 3 次，失败会记录错误日志。
+4. 导出 `files`、`api_tokens`、`kv_meta` 的建表语句、索引和数据，不包含图片内容、Worker 密钥或 D1 内部迁移表。新增业务表/迁移时需同步更新导出逻辑。
+5. 自动备份限制为三张表合计 20,000 行、SQL 数据语句 8 MiB，超出时明确失败并保留旧备份，避免耗尽 Worker 内存。更大数据库请使用 `bunx wrangler d1 export imgflare-db --remote --output latest.sql` 或 D1 Time Travel。
 
 后台「设置」可以下载，也可以看 `backup-sha256` / `backup-at`。
 
 ### 恢复
 
-用同一把访问密钥：
+先创建一个空 D1 数据库作为恢复目标，再用同一把 R2 访问密钥下载 SQL；恢复完成后更新 Worker 的 D1 绑定。不要将下列 SQL 导入仍有业务数据的库：
 
 ```bash
 AWS_ACCESS_KEY_ID=$R2_ACCESS_KEY_ID \
@@ -289,7 +310,7 @@ AWS_SECRET_ACCESS_KEY=$R2_SECRET_ACCESS_KEY \
 aws s3 cp s3://$R2_BUCKET/back/latest.sql latest.sql \
   --endpoint-url https://$R2_ACCOUNT_ID.r2.cloudflarestorage.com
 
-bunx wrangler d1 execute imgflare-db --remote --file=latest.sql
+bunx wrangler d1 execute imgflare-restored --remote --file=latest.sql
 ```
 
 ### Time Travel
@@ -308,7 +329,7 @@ bun run dev:cron
 curl "http://localhost:8787/cdn-cgi/local/scheduled"
 ```
 
-> 本地 `dump()` 会返回 404 —— miniflare 未实现 D1 导出。这条路径需在线上验证。
+> 已移除仅支持旧 Alpha 数据库的 `dump()`。查询导出可在本地 D1 验证；`bun run test:integration` 使用隔离的本地 D1 和模拟 R2/Turnstile，验证 SQL 恢复、权限、定时任务及失败保留。
 
 ---
 
@@ -319,15 +340,17 @@ curl "http://localhost:8787/cdn-cgi/local/scheduled"
 ```bash
 bun install
 cp .dev.vars.example .dev.vars
+# 编辑 .dev.vars，填入随机 SESSION_SECRET 和自己的 R2 配置
 bun run dev                            # http://localhost:8787，会先执行本地迁移
 ```
 
 常用命令：
 
 ```bash
-bun run verify           # 类型检查 + 契约检查 + 全量构建
+bun run verify           # 类型检查 + 契约检查 + 全量构建 + Worker 集成测试
 bun run typecheck        # tsc --noEmit
 bun run check:contract   # Rust 结构体 vs TS interface + 静态安全不变量
+bun run test:integration # 先构建资源和 Worker，再测登录、Key 上传、备份恢复及 Cron
 bun run build:assets     # 只构建前端 + 油猴
 bun run build:worker     # 只构建 Wasm
 bun run clean            # 清 dist / build / target
@@ -343,7 +366,7 @@ Cloudflare 构建镜像的默认 Bun 比本地旧，读不懂 `bun.lock`。到 *
 
 **部署报 `required secrets have not been set`**
 
-「变量和机密」里的值只给构建用，wrangler 不会把它当成 Worker 密钥。确认 8 个名字都填了，然后重新部署。`bun run deploy` 会读这些环境变量并写进 Worker。
+「变量和机密」里的值只给构建用，wrangler 不会把它当成 Worker 密钥。确认 9 个名字都填了，然后重新部署。`bun run deploy` 会读这些环境变量并写进 Worker。
 
 **部署后所有接口 500**
 

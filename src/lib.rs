@@ -61,11 +61,11 @@ pub async fn main(req: Request, env: Env, ctx: Context) -> Result<Response, work
 /// Public file access never touches this path.
 #[event(scheduled)]
 pub async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
-    // The cron handler reports through the return value only — see the note on
-    // logging in `error.rs`.
-    if let Ok(cfg) = config::Config::from_env(&env) {
-        // Already retried inside; on failure the previous `back/latest.sql` is
-        // left untouched, which is the outcome that matters.
-        let _ = backup::run_backup_with_retries(&env, &cfg).await;
+    let result = match config::Config::from_env(&env) {
+        Ok(cfg) => backup::run_backup_with_retries(&env, &cfg).await,
+        Err(err) => Err(err),
+    };
+    if let Err(err) = result {
+        worker::console_error!("scheduled backup failed: {err}");
     }
 }

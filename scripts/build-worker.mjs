@@ -195,8 +195,8 @@ class Entrypoint extends WorkerEntrypoint {
     return bindings.fetch(request, this.env, this.ctx);
   }
 
-  scheduled(event, env, ctx) {
-    return bindings.scheduled(event, env, ctx);
+  scheduled(event) {
+    return bindings.scheduled(event, this.env, this.ctx);
   }
 }
 
