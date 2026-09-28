@@ -15,7 +15,6 @@ import type {
   FileInfo,
   FileListResponse,
   MeResponse,
-  StatsResponse,
   UploadResult,
 } from './types.js';
 
@@ -198,10 +197,6 @@ export function deleteFile(id: string): Promise<void> {
   return request<void>(`/api/files/${encodeURIComponent(id)}`, {
     method: 'DELETE',
   });
-}
-
-export function stats(): Promise<StatsResponse> {
-  return request<StatsResponse>('/api/stats');
 }
 
 // ---------------------------------------------------------------------------

@@ -151,11 +151,13 @@ export class FileBrowser {
   }
 
   private renderCard(file: FileInfo): HTMLElement {
-    const media = el('a', {
+    // Clicking the thumbnail opens the full-size preview in a <dialog> instead
+    // of a new tab, and an explicit action button opens the raw URL for anyone
+    // who wants to link to it directly.
+    const media = el('button', {
       class: 'shot-media',
-      href: file.url,
-      target: '_blank',
-      rel: 'noopener noreferrer',
+      type: 'button',
+      'aria-label': `预览 ${file.name}`,
     });
     const preview = el('img', {
       class: 'shot-img',
@@ -169,10 +171,12 @@ export class FileBrowser {
       preview.remove();
     });
     media.append(preview);
+    media.addEventListener('click', () => openPreview(file));
 
     const actions = el('div', { class: 'shot-actions' }, [
       button('链接', () => copyWithFeedback(file.url, 'URL', copyText)),
       button('Markdown', () => copyWithFeedback(file.markdown, 'Markdown', copyText)),
+      link('打开', file.url),
       button('删除', () => void this.confirmDelete(file), 'btn-danger'),
     ]);
 
@@ -219,4 +223,46 @@ function button(
   });
   node.addEventListener('click', onClick);
   return node;
+}
+
+/** An action that navigates, styled like the buttons next to it. */
+function link(label: string, href: string): HTMLAnchorElement {
+  return el('a', {
+    class: 'btn btn-ghost btn-sm',
+    href,
+    target: '_blank',
+    rel: 'noopener noreferrer',
+    text: label,
+  });
+}
+
+/**
+ * Full-size preview in a `<dialog>`.
+ *
+ * Clicking the backdrop closes it, and so do Esc (native `<dialog>`
+ * behaviour) and a second click on the image. A click on the image would
+ * otherwise bubble up to the dialog and close it immediately, so that case is
+ * filtered out.
+ */
+function openPreview(file: FileInfo): void {
+  const dialog = document.getElementById('preview-dialog');
+  const image = document.getElementById('preview-dialog-img');
+  if (!(dialog instanceof HTMLDialogElement) || !(image instanceof HTMLImageElement)) {
+    // Markup changed — fall back to opening the raw image.
+    window.open(file.url, '_blank', 'noopener');
+    return;
+  }
+
+  // Bound once and kept: a one-shot listener would be consumed by the click on
+  // the image itself, leaving later backdrop clicks unable to close the dialog.
+  if (!dialog.dataset.bound) {
+    dialog.dataset.bound = '1';
+    dialog.addEventListener('click', (event) => {
+      if (event.target !== image) dialog.close();
+    });
+  }
+
+  image.src = file.url;
+  image.alt = file.name;
+  if (!dialog.open) dialog.showModal();
 }

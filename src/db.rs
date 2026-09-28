@@ -31,7 +31,6 @@ pub struct TokenRecord {
     pub token_hash: String,
     pub created_at: i64,
     pub last_used_at: Option<i64>,
-    pub revoked_at: Option<i64>,
 }
 
 /// Thin wrapper over the D1 binding.
@@ -194,16 +193,6 @@ impl Db {
         Ok((rows, total))
     }
 
-    /// Total bytes stored, and object count — shown on the settings panel.
-    pub async fn storage_stats(&self) -> ApiResult<(i64, i64)> {
-        let stmt = self.prepare("SELECT COUNT(*) AS n, COALESCE(SUM(size), 0) AS total FROM files");
-        let row = stmt
-            .first::<StatsRow>(None)
-            .await
-            .map_err(ApiError::from)?;
-        Ok(row.map(|r| (r.n, r.total)).unwrap_or((0, 0)))
-    }
-
     // -----------------------------------------------------------------------
     // api_tokens
     // -----------------------------------------------------------------------
@@ -211,7 +200,7 @@ impl Db {
     pub async fn find_token_by_hash(&self, token_hash: &str) -> ApiResult<Option<TokenRecord>> {
         let stmt = self
             .prepare(
-                "SELECT id, name, token_hash, created_at, last_used_at, revoked_at \
+                "SELECT id, name, token_hash, created_at, last_used_at \
                  FROM api_tokens WHERE token_hash = ?",
             )
             .bind(&[JsValue::from_str(token_hash)])
@@ -222,7 +211,7 @@ impl Db {
 
     pub async fn list_tokens(&self) -> ApiResult<Vec<TokenRecord>> {
         let stmt = self.prepare(
-            "SELECT id, name, token_hash, created_at, last_used_at, revoked_at \
+            "SELECT id, name, token_hash, created_at, last_used_at \
              FROM api_tokens ORDER BY created_at DESC",
         );
         let result = stmt.all().await.map_err(ApiError::from)?;
@@ -233,8 +222,8 @@ impl Db {
         let stmt = self
             .prepare(
                 "INSERT INTO api_tokens \
-                 (id, name, token_hash, created_at, last_used_at, revoked_at) \
-                 VALUES (?, ?, ?, ?, NULL, NULL)",
+                 (id, name, token_hash, created_at, last_used_at) \
+                 VALUES (?, ?, ?, ?, NULL)",
             )
             .bind(&[
                 JsValue::from_str(&token.id),
@@ -246,21 +235,6 @@ impl Db {
 
         stmt.run().await.map_err(ApiError::from)?;
         Ok(())
-    }
-
-    /// Soft-revoke a token. Revocation is permanent — the row is kept so the
-    /// admin can still see that the token existed.
-    pub async fn revoke_token(&self, id: &str) -> ApiResult<u64> {
-        let stmt = self
-            .prepare("UPDATE api_tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL")
-            .bind(&[
-                JsValue::from_f64(crate::utils::now_ms() as f64),
-                JsValue::from_str(id),
-            ])
-            .map_err(ApiError::from)?;
-
-        let result = stmt.run().await.map_err(ApiError::from)?;
-        Ok(result.meta()?.and_then(|m| m.changes).unwrap_or(0) as u64)
     }
 
     pub async fn touch_token(&self, id: &str) -> ApiResult<()> {
@@ -275,7 +249,7 @@ impl Db {
         Ok(())
     }
 
-    /// Hard-delete a token row. Used only by the admin UI's "remove" action.
+    /// Hard-delete a token row, so nothing can authenticate with it afterwards.
     pub async fn delete_token(&self, id: &str) -> ApiResult<u64> {
         let stmt = self
             .prepare("DELETE FROM api_tokens WHERE id = ?")
@@ -355,12 +329,6 @@ fn escape_like(input: &str) -> String {
 #[derive(Deserialize)]
 struct CountRow {
     n: i64,
-}
-
-#[derive(Deserialize)]
-struct StatsRow {
-    n: i64,
-    total: i64,
 }
 
 #[derive(Deserialize)]

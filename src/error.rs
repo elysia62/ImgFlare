@@ -13,7 +13,7 @@ pub enum ApiError {
     BadRequest(&'static str),
     /// 401 — no valid session and no valid API token.
     Unauthorized,
-    /// 403 — authenticated but not allowed (bad Origin, revoked token, ...).
+    /// 403 — authenticated but not allowed (bad Origin, missing session, ...).
     Forbidden(&'static str),
     /// 404 — the resource does not exist.
     NotFound(&'static str),

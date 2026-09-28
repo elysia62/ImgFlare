@@ -48,6 +48,16 @@ export async function initLoginPage(): Promise<void> {
   const errorBox = byId('login-error');
   const turnstileHost = byId('turnstile');
 
+  // Password visibility toggle. The behaviour lives here rather than in an
+  // inline <script> because the admin CSP only allows same-origin scripts.
+  const togglePwd = byId<HTMLButtonElement>('toggle-pwd');
+  togglePwd.addEventListener('click', () => {
+    const revealed = passwordInput.type === 'text';
+    passwordInput.type = revealed ? 'password' : 'text';
+    togglePwd.classList.toggle('is-on', !revealed);
+    passwordInput.focus();
+  });
+
   const siteKey = document.body.dataset.turnstileSiteKey ?? '';
   let turnstileToken = '';
   let widgetId: string | undefined;

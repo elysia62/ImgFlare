@@ -9,7 +9,7 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
-// @connect      imgflare.your-subdomain.workers.dev
+// @connect      *
 // @connect      localhost
 // @run-at       document-idle
 // ==/UserScript==
@@ -85,10 +85,12 @@
     for (const file of files) {
       if (file.size === 0) continue;
       counter += 1;
+      const supported = /\.(png|jpe?g|webp|gif|avif|bmp|ico|svg|jxl|heic|heif|tiff?)$/i.test(file.name);
       tasks.push({
         key: `t${counter}`,
         file,
-        state: "pending"
+        state: supported ? "pending" : "failed",
+        error: supported ? void 0 : "\u53EA\u652F\u6301\u56FE\u7247\uFF08png\u3001jpg\u3001webp\u3001gif\u3001avif\u3001svg\u3001jxl\u3001heic\u3001tiff \u7B49\uFF09"
       });
     }
     renderQueue();
@@ -150,7 +152,7 @@
         } catch (error) {
           lastError = error;
           const message = error instanceof Error ? error.message : "upload_failed";
-          if (/^(unauthorized|token_revoked|invalid_sha256|file_too_large|unsupported_file_type|missing_file|expected_multipart)/.test(message)) {
+          if (/^(unauthorized|invalid_sha256|checksum_mismatch|file_too_large|unsupported_file_type|missing_file|expected_multipart)/.test(message)) {
             break;
           }
           if (attempt < MAX_RETRIES) {
@@ -270,7 +272,7 @@
     actions.append(pick, settingsButton, clear);
     const hint = document.createElement("p");
     hint.className = "pih-hint";
-    hint.textContent = "Ctrl+V \u7C98\u8D34\u56FE\u7247 \xB7 \u62D6\u62FD\u6587\u4EF6\u5230\u9875\u9762 \xB7 \u652F\u6301\u6279\u91CF";
+    hint.textContent = "Ctrl+V \u7C98\u8D34\u56FE\u7247 \xB7 \u62D6\u62FD\u56FE\u7247\u5230\u9875\u9762 \xB7 \u652F\u6301\u6279\u91CF";
     const queue = document.createElement("div");
     queue.className = "pih-queue";
     queue.id = "pih-queue";
@@ -384,6 +386,7 @@
   function pickFiles() {
     const input = document.createElement("input");
     input.type = "file";
+    input.accept = ".png,.jpg,.jpeg,.webp,.gif,.avif,.bmp,.ico,.svg,.jxl,.heic,.heif,.tif,.tiff,image/png,image/jpeg,image/webp,image/gif,image/avif,image/bmp,image/x-icon,image/svg+xml,image/jxl,image/heic,image/heif,image/tiff";
     input.multiple = true;
     input.style.display = "none";
     document.body.appendChild(input);
@@ -396,7 +399,7 @@
     input.click();
   }
   function renamePasted(file) {
-    if (/^image\.(png|jpe?g|gif|webp|bmp)$/i.test(file.name) || file.name === "blob") {
+    if (/^image\.(png|jpe?g|gif|webp|bmp|avif|ico|svg|jxl|heic|heif|tiff?)$/i.test(file.name) || file.name === "blob") {
       const ext = (file.type.split("/")[1] ?? "png").replace("jpeg", "jpg");
       const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[-:]/g, "").replace(/\..+$/, "").replace("T", "-");
       return new File([file], `pasted-${stamp}.${ext}`, { type: file.type });

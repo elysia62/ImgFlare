@@ -270,7 +270,7 @@ async function process(task: Task): Promise<void> {
         lastError = error;
         const message = error instanceof Error ? error.message : 'upload_failed';
         // 4xx（除限流外）重试没有意义。
-        if (/^(unauthorized|token_revoked|invalid_sha256|checksum_mismatch|file_too_large|unsupported_file_type|missing_file|expected_multipart)/.test(message)) {
+        if (/^(unauthorized|invalid_sha256|checksum_mismatch|file_too_large|unsupported_file_type|missing_file|expected_multipart)/.test(message)) {
           break;
         }
         if (attempt < MAX_RETRIES) {

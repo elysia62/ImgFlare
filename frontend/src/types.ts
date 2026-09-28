@@ -47,8 +47,6 @@ export interface ApiToken {
   prefix: string;
   createdAt: number;
   lastUsedAt: number | null;
-  revokedAt: number | null;
-  revoked: boolean;
 }
 
 /** Response from `POST /api/tokens` — the plaintext is shown exactly once. */
@@ -73,12 +71,6 @@ export interface MeResponse {
   admin: boolean;
   username?: string;
   principal?: 'admin' | 'token';
-}
-
-/** `GET /api/stats` */
-export interface StatsResponse {
-  files: number;
-  bytes: number;
 }
 
 /** `GET /api/backup/status` */
@@ -140,8 +132,7 @@ export function humanizeError(code: string): string {
     checksum_mismatch: '文件内容和校验值不一致',
     expected_multipart: '上传格式不正确',
     file_not_found: '文件不存在',
-    token_not_found: 'Token 不存在或已撤销',
-    token_revoked: 'Token 已被撤销',
+    token_not_found: 'Token 不存在',
     no_backup_available: '还没有可用的备份',
     name_required: '请填写 Token 名称',
     name_too_long: 'Token 名称过长',

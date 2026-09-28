@@ -2,58 +2,102 @@
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="robots" content="noindex, nofollow" />
     <meta name="color-scheme" content="light dark" />
     <title>ImgFlare · 个人图床</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body data-page="panel" data-max-upload-size="YOUR_MAX_UPLOAD_SIZE">
+    <!-- 整合式现代导航顶栏 -->
     <header class="topbar">
-      <div class="topbar-left">
-        <span class="brand-mark" aria-hidden="true">IF</span>
-        <div class="brand-text">
+      <div class="topbar-inner">
+        <div class="topbar-left">
+          <span class="brand-mark" aria-hidden="true">IF</span>
           <strong class="brand">ImgFlare</strong>
-          <span id="stats" class="stats"></span>
+        </div>
+
+        <!-- 导航直接嵌入顶栏（类似 NodeImage 风格） -->
+        <nav class="tabs" role="tablist" aria-label="主功能切换">
+          <button
+            id="tab-upload"
+            class="tab is-active"
+            type="button"
+            role="tab"
+            aria-selected="true"
+            aria-controls="panel-upload"
+            data-tab="upload"
+          >
+            上传
+          </button>
+          <button
+            id="tab-files"
+            class="tab"
+            type="button"
+            role="tab"
+            aria-selected="false"
+            aria-controls="panel-files"
+            data-tab="files"
+          >
+            图片
+            <span id="files-count" class="tab-badge" hidden></span>
+          </button>
+          <button
+            id="tab-tokens"
+            class="tab"
+            type="button"
+            role="tab"
+            aria-selected="false"
+            aria-controls="panel-tokens"
+            data-tab="tokens"
+          >
+            API Token
+          </button>
+          <button
+            id="tab-settings"
+            class="tab"
+            type="button"
+            role="tab"
+            aria-selected="false"
+            aria-controls="panel-settings"
+            data-tab="settings"
+          >
+            设置
+          </button>
+        </nav>
+
+        <div class="topbar-right">
+          <button
+            id="theme-toggle"
+            class="btn btn-ghost btn-sm icon-btn"
+            type="button"
+            title="切换深色 / 浅色"
+            aria-label="切换主题"
+          >
+            <span class="theme-icon" aria-hidden="true"></span>
+          </button>
+          <button id="logout" class="btn btn-ghost btn-sm" type="button">退出</button>
         </div>
       </div>
-
-      <nav class="topbar-right">
-        <div class="identity" title="当前登录账号">
-          <span class="identity-dot" aria-hidden="true"></span>
-          <span id="whoami" class="identity-name">—</span>
-        </div>
-        <button
-          id="theme-toggle"
-          class="btn btn-ghost btn-sm icon-btn"
-          type="button"
-          title="切换深色 / 浅色"
-          aria-label="切换主题"
-        >
-          <span class="theme-icon" aria-hidden="true"></span>
-        </button>
-        <button id="logout" class="btn btn-ghost btn-sm" type="button">退出</button>
-      </nav>
     </header>
-
-    <nav class="tabs" role="tablist">
-      <button class="tab is-active" type="button" role="tab" data-tab="upload">
-        上传
-      </button>
-      <button class="tab" type="button" role="tab" data-tab="files">
-        图片
-        <span id="files-count" class="tab-badge" hidden></span>
-      </button>
-      <button class="tab" type="button" role="tab" data-tab="tokens">API Token</button>
-      <button class="tab" type="button" role="tab" data-tab="settings">设置</button>
-    </nav>
 
     <main class="layout">
       <!-- ------------------------------------------------------------------ -->
       <!-- Upload                                                             -->
       <!-- ------------------------------------------------------------------ -->
-      <section class="panel is-active" id="panel-upload">
-        <div id="drop-zone" class="drop-zone" tabindex="0" role="button">
+      <section
+        class="panel is-active"
+        id="panel-upload"
+        role="tabpanel"
+        aria-labelledby="tab-upload"
+      >
+        <div
+          id="drop-zone"
+          class="drop-zone"
+          tabindex="0"
+          role="button"
+          aria-label="点击或拖拽上传图片"
+        >
           <svg class="drop-icon" viewBox="0 0 24 24" aria-hidden="true">
             <path
               d="M12 16V4m0 0L7 9m5-5l5 5M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"
@@ -65,12 +109,19 @@
             />
           </svg>
           <p class="drop-title">拖拽图片到这里，或点击选择</p>
-          <p class="drop-hint">png / jpg / webp / gif / avif / svg / jxl / heic · <kbd>Ctrl</kbd>+<kbd>V</kbd> 粘贴</p>
-          <p class="drop-note">相同内容只保存一份，不会重复占用空间</p>
+          <p class="drop-hint">
+            支持 PNG / JPG / WebP / GIF / AVIF / SVG / HEIC · <kbd>Ctrl</kbd>+<kbd>V</kbd> 粘贴
+          </p>
+          <p class="drop-note">相同内容通过 SHA-256 查重，不重复占用存储空间</p>
         </div>
 
-        <!-- Kept outside the drop zone so a click does not double-trigger. -->
-        <input id="file-input" type="file" accept=".png,.jpg,.jpeg,.webp,.gif,.avif,.bmp,.ico,.svg,.jxl,.heic,.heif,.tif,.tiff,image/png,image/jpeg,image/webp,image/gif,image/avif,image/bmp,image/x-icon,image/svg+xml,image/jxl,image/heic,image/heif,image/tiff" multiple hidden />
+        <input
+          id="file-input"
+          type="file"
+          accept=".png,.jpg,.jpeg,.webp,.gif,.avif,.bmp,.ico,.svg,.jxl,.heic,.heif,.tif,.tiff,image/*"
+          multiple
+          hidden
+        />
 
         <div id="queue-wrap" class="queue-wrap" hidden>
           <div class="queue-header">
@@ -82,23 +133,29 @@
               清除已完成
             </button>
           </div>
-          <div id="queue" class="queue"></div>
+          <div id="queue" class="queue" aria-live="polite"></div>
         </div>
       </section>
 
       <!-- ------------------------------------------------------------------ -->
       <!-- Files                                                              -->
       <!-- ------------------------------------------------------------------ -->
-      <section class="panel" id="panel-files">
+      <section
+        class="panel"
+        id="panel-files"
+        role="tabpanel"
+        aria-labelledby="tab-files"
+      >
         <div class="section-head">
-          <h2 class="section-title">图片</h2>
+          <h2 class="section-title">图片库</h2>
           <div class="section-tools">
             <input
               id="search"
               class="input search-input"
               type="search"
-              placeholder="搜索图片"
+              placeholder="搜索图片..."
               autocomplete="off"
+              aria-label="搜索图片"
             />
             <button id="refresh-files" class="btn btn-ghost btn-sm" type="button">
               刷新
@@ -115,12 +172,17 @@
       <!-- ------------------------------------------------------------------ -->
       <!-- API tokens                                                         -->
       <!-- ------------------------------------------------------------------ -->
-      <section class="panel" id="panel-tokens">
+      <section
+        class="panel"
+        id="panel-tokens"
+        role="tabpanel"
+        aria-labelledby="tab-tokens"
+      >
         <div class="section-head">
           <h2 class="section-title">API Token</h2>
         </div>
         <p class="section-desc">
-          油猴脚本使用 Token 上传。Token 只能上传和查重，不能删除图片，也不能管理后台。
+          用于油猴脚本或外部工具上传。Token 仅具备上传和查重权限，不能删除图片或访问控制台。
         </p>
 
         <form id="token-form" class="token-form" autocomplete="off">
@@ -128,10 +190,11 @@
             id="token-name"
             class="input"
             type="text"
-            placeholder="名称，例如 Tampermonkey"
+            placeholder="名称，例如：Tampermonkey 脚本"
             maxlength="64"
+            required
           />
-          <button class="btn btn-primary" type="submit">生成</button>
+          <button class="btn btn-primary" type="submit">生成 Token</button>
         </form>
 
         <div id="new-token" class="new-token" hidden></div>
@@ -141,14 +204,19 @@
       <!-- ------------------------------------------------------------------ -->
       <!-- Settings / backup                                                  -->
       <!-- ------------------------------------------------------------------ -->
-      <section class="panel" id="panel-settings">
+      <section
+        class="panel"
+        id="panel-settings"
+        role="tabpanel"
+        aria-labelledby="tab-settings"
+      >
         <div class="section-head">
-          <h2 class="section-title">设置</h2>
+          <h2 class="section-title">系统设置</h2>
         </div>
 
         <div class="card-inner">
           <div class="card-inner-head">
-            <h3 class="sub-title">D1 备份</h3>
+            <h3 class="sub-title">D1 数据库备份</h3>
             <div class="card-inner-actions">
               <a id="backup-download" class="btn btn-sm" href="/api/backup/latest">
                 下载最新备份
@@ -160,24 +228,27 @@
           </div>
           <div id="backup-status" class="kv-list"></div>
           <p class="hint">
-            每天 04:00 UTC 自动备份一次，和图片放在同一个桶的 <code>back/latest.sql</code>。
+            每日 04:00 UTC 自动备份一次，保存在存储桶中的 <code>back/latest.sql</code>。
           </p>
         </div>
 
         <div class="card-inner">
           <div class="card-inner-head">
-            <h3 class="sub-title">油猴脚本</h3>
+            <h3 class="sub-title">油猴脚本 (Userscript)</h3>
           </div>
           <ul class="plain-list">
-            <li>先在「API Token」生成一个 Token。</li>
+            <li>先在「API Token」标签页生成一个访问 Token。</li>
             <li>安装 <code>userscript/image-uploader.user.js</code>。</li>
-            <li>
-              脚本菜单里填入 API 地址（<code id="api-base-hint">—</code>）与 Token。
-            </li>
+            <li>在网页右键脚本菜单中填入 API 地址（<code id="api-base-hint">—</code>）与生成的 Token。</li>
           </ul>
         </div>
       </section>
     </main>
+
+    <!-- 全屏大图预览弹窗。打开与关闭都在 files.ts 里绑定，页面不写内联事件。 -->
+    <dialog id="preview-dialog" class="preview-dialog" aria-label="大图预览">
+      <img id="preview-dialog-img" src="" alt="" />
+    </dialog>
 
     <div id="toasts" class="toasts" aria-live="polite"></div>
     <script type="module" src="/main.js"></script>

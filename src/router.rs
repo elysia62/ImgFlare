@@ -100,13 +100,6 @@ pub async fn route(req: Request, env: Env, _ctx: worker::Context) -> Result<Resp
 
         // -- misc ----------------------------------------------------------
         (worker::Method::Get, ["api", "me"]) => handle_me(req, &env).await,
-        (worker::Method::Get, ["api", "stats"]) => handle_stats(req, &env).await,
-
-        // Revoking is the safe, reversible action offered by the UI. A hard
-        // delete is available at `?purge=1` for cleaning up test tokens.
-        (worker::Method::Delete, ["api", "tokens", id, "purge"]) => {
-            handle_purge_token(req, &env, id).await
-        }
 
         // Path traversal / anything unrecognised: never fall through to assets
         // for an /api/ path, so a typo is a clear 404 rather than an HTML page.
@@ -391,14 +384,6 @@ async fn handle_delete_file(
     Ok(response::no_content())
 }
 
-async fn handle_stats(req: Request, env: &Env) -> ApiResult<Response> {
-    let db = Db::from_env(env)?;
-    auth::require_admin(&req, &db).await?;
-
-    let stats = files::handle_stats(&db).await?;
-    Ok(response::ok(stats))
-}
-
 // ---------------------------------------------------------------------------
 // Token handlers
 // ---------------------------------------------------------------------------
@@ -435,18 +420,6 @@ async fn handle_delete_token(req: Request, env: &Env, id: &str) -> ApiResult<Res
     auth::check_origin(&req, &cfg)?;
 
     tokens::handle_revoke(&db, id).await?;
-    Ok(response::no_content())
-}
-
-/// Permanently remove a token row. `DELETE /api/tokens/:id/purge`
-async fn handle_purge_token(req: Request, env: &Env, id: &str) -> ApiResult<Response> {
-    let db = Db::from_env(env)?;
-    auth::require_admin(&req, &db).await?;
-
-    let cfg = Config::from_env(env)?;
-    auth::check_origin(&req, &cfg)?;
-
-    tokens::handle_delete(&db, id).await?;
     Ok(response::no_content())
 }
 

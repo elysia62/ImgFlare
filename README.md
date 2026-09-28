@@ -211,7 +211,6 @@ curl -X POST $BASE/api/upload \
 | `GET` | `/api/files?q=&limit=&offset=` | Session |
 | `GET` | `/api/files/:id` | Session |
 | `DELETE` | `/api/files/:id` | **仅 Session** |
-| `GET` | `/api/stats` | Session |
 
 API Token 不能删除图片。
 
@@ -221,8 +220,7 @@ API Token 不能删除图片。
 |---|---|---|
 | `GET` | `/api/tokens` | Session |
 | `POST` | `/api/tokens` | Session（明文只返回一次） |
-| `DELETE` | `/api/tokens/:id` | Session |
-| `DELETE` | `/api/tokens/:id/purge` | Session |
+| `DELETE` | `/api/tokens/:id` | Session（删除记录，立刻失效） |
 
 ### 备份
 

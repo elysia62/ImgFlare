@@ -33,7 +33,6 @@ const ROOT = path.resolve(import.meta.dir, "..");
 const PAIRS = [
   { rust: ["src/upload.rs", "FileInfo"], ts: ["FileInfo"], note: "GET /api/files, POST /api/upload" },
   { rust: ["src/files.rs", "ListResponse"], ts: ["FileListResponse"], note: "GET /api/files" },
-  { rust: ["src/files.rs", "StatsResponse"], ts: ["StatsResponse"], note: "GET /api/stats" },
   { rust: ["src/tokens.rs", "TokenInfo"], ts: ["ApiToken"], note: "GET /api/tokens" },
   { rust: ["src/tokens.rs", "CreatedToken"], ts: ["CreatedToken"], note: "POST /api/tokens" },
   { rust: ["src/upload.rs", "CheckResponse"], ts: ["DuplicateCheckResult"], note: "POST /api/upload/check" },

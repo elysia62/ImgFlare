@@ -12,10 +12,8 @@ import {
   createToken,
   listTokens,
   logout,
-  me,
   revokeToken,
   runBackup,
-  stats,
 } from './api.js';
 import { copyText } from './clipboard.js';
 import { FileBrowser } from './files.js';
@@ -39,11 +37,7 @@ const DEFAULT_MAX_SIZE = 50 * 1024 * 1024;
 
 export async function initApp(): Promise<void> {
   // Access control lives on the server: `/` only serves this page to a signed-in
-  // admin and redirects everyone else. This call is purely for display, so a
-  // failure must not block the panel from rendering.
-  const who = await me().catch(() => null);
-
-  byId('whoami').textContent = who?.username || 'admin';
+  // admin and redirects everyone else.
   byId('api-base-hint').textContent = window.location.origin;
 
   initTabs();
@@ -194,7 +188,6 @@ export async function initApp(): Promise<void> {
   await Promise.all([
     browser.refresh(),
     refreshTokens(tokenList),
-    refreshStats(),
     refreshBackup(),
   ]);
 }
@@ -302,12 +295,12 @@ function renderTask(task: UploadTask, queue: UploadQueue): HTMLElement {
 
   // Progress bar while uploading.
   if (task.state === 'uploading') {
-    const bar = el('div', { class: 'progress' }, [
-      el('div', {
-        class: 'progress-fill',
-        style: `width: ${Math.round(task.progress * 100)}%`,
-      }),
-    ]);
+    // Width goes through the CSSOM property, not a `style` attribute: the
+    // panel's `style-src 'self'` blocks inline style attributes, so setting
+    // the attribute would silently render a zero-width bar.
+    const fill = el('div', { class: 'progress-fill' });
+    fill.style.width = `${Math.round(task.progress * 100)}%`;
+    const bar = el('div', { class: 'progress' }, [fill]);
     children.push(bar);
   }
 
@@ -412,13 +405,8 @@ async function refreshTokens(container: HTMLElement): Promise<void> {
 }
 
 function renderToken(token: ApiToken, container: HTMLElement): HTMLElement {
-  const status = token.revoked
-    ? el('span', { class: 'tag tag-danger', text: '已撤销' })
-    : el('span', { class: 'tag tag-ok', text: '有效' });
-
   const meta = el('div', { class: 'token-meta' }, [
     el('span', { class: 'token-name', text: token.name }),
-    status,
     el('span', { class: 'dim', text: `创建于 ${formatTime(token.createdAt)}` }),
     el('span', {
       class: 'dim',
@@ -427,32 +415,30 @@ function renderToken(token: ApiToken, container: HTMLElement): HTMLElement {
     el('span', { class: 'mono dim', text: `#${token.prefix}` }),
   ]);
 
-  const children: (Node | string)[] = [meta];
+  const remove = el('button', {
+    class: 'btn btn-danger btn-sm',
+    type: 'button',
+    text: '删除',
+  });
+  remove.addEventListener('click', () => {
+    void (async () => {
+      if (!window.confirm(`确定删除 Token「${token.name}」吗？删除后无法恢复，使用它的脚本会立刻失效。`)) {
+        return;
+      }
+      try {
+        await revokeToken(token.id);
+        toast('Token 已删除', 'ok');
+        await refreshTokens(container);
+      } catch (error) {
+        toast(errorText(error, '删除失败'), 'error');
+      }
+    })();
+  });
 
-  if (!token.revoked) {
-    const revoke = el('button', {
-      class: 'btn btn-danger btn-sm',
-      type: 'button',
-      text: '撤销',
-    });
-    revoke.addEventListener('click', () => {
-      void (async () => {
-        if (!window.confirm(`确定撤销 Token「${token.name}」吗？撤销后无法恢复。`)) {
-          return;
-        }
-        try {
-          await revokeToken(token.id);
-          toast('Token 已撤销', 'ok');
-          await refreshTokens(container);
-        } catch (error) {
-          toast(errorText(error, '撤销失败'), 'error');
-        }
-      })();
-    });
-    children.push(el('div', { class: 'token-actions' }, [revoke]));
-  }
-
-  return el('article', { class: 'token-card' }, children);
+  return el('article', { class: 'token-card' }, [
+    meta,
+    el('div', { class: 'token-actions' }, [remove]),
+  ]);
 }
 
 /** Show a newly created token, with the "only shown once" warning. */
@@ -470,22 +456,8 @@ function showNewToken(token: string): void {
 }
 
 // ---------------------------------------------------------------------------
-// Stats and backup
+// Backup
 // ---------------------------------------------------------------------------
-
-async function refreshStats(): Promise<void> {
-  const host = byId('stats');
-  try {
-    const data = await stats();
-    replace(host, [
-      el('span', { text: `${data.files} 张图片` }),
-      el('span', { class: 'dim', text: '·' }),
-      el('span', { text: formatBytes(data.bytes) }),
-    ]);
-  } catch {
-    replace(host, []);
-  }
-}
 
 async function refreshBackup(): Promise<void> {
   const host = byId('backup-status');

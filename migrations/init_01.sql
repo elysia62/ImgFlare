@@ -30,14 +30,14 @@ CREATE INDEX IF NOT EXISTS idx_files_created_at
 -- ---------------------------------------------------------------------------
 -- api_tokens: API tokens for the userscript (X-API-Key header)
 -- Only SHA-256(token) is ever stored — never the plaintext token.
+-- Revoking a token deletes the row, so there is no `revoked_at` column.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS api_tokens (
     id           TEXT PRIMARY KEY,
     name         TEXT NOT NULL,
     token_hash   TEXT NOT NULL UNIQUE,
     created_at   INTEGER NOT NULL,
-    last_used_at INTEGER,
-    revoked_at   INTEGER
+    last_used_at INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_api_tokens_token_hash

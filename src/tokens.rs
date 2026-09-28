@@ -20,8 +20,6 @@ pub struct TokenInfo {
     pub prefix: String,
     pub created_at: i64,
     pub last_used_at: Option<i64>,
-    pub revoked_at: Option<i64>,
-    pub revoked: bool,
 }
 
 #[derive(Deserialize)]
@@ -63,7 +61,6 @@ pub async fn handle_create(db: &Db, body: CreateTokenRequest) -> ApiResult<Creat
         token_hash: new.hash,
         created_at: now_ms(),
         last_used_at: None,
-        revoked_at: None,
     };
 
     db.insert_token(&record).await?;
@@ -76,18 +73,9 @@ pub async fn handle_create(db: &Db, body: CreateTokenRequest) -> ApiResult<Creat
     })
 }
 
-/// Revoke a token. Revocation is one-way.
+/// Revoke a token: the row is deleted outright, so nothing can authenticate
+/// with it afterwards.
 pub async fn handle_revoke(db: &Db, id: &str) -> ApiResult<()> {
-    let removed = db.revoke_token(id).await?;
-    if removed == 0 {
-        // Either it never existed, or it was already revoked.
-        return Err(ApiError::NotFound("token_not_found"));
-    }
-    Ok(())
-}
-
-/// Permanently delete a token row (only valid once it is already revoked).
-pub async fn handle_delete(db: &Db, id: &str) -> ApiResult<()> {
     let removed = db.delete_token(id).await?;
     if removed == 0 {
         return Err(ApiError::NotFound("token_not_found"));
@@ -102,7 +90,5 @@ fn token_info(record: &TokenRecord) -> TokenInfo {
         prefix: record.token_hash.chars().take(8).collect(),
         created_at: record.created_at,
         last_used_at: record.last_used_at,
-        revoked_at: record.revoked_at,
-        revoked: record.revoked_at.is_some(),
     }
 }

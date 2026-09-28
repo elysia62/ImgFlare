@@ -89,19 +89,6 @@ pub async fn handle_delete(r2: &R2, db: &Db, id: &str) -> ApiResult<()> {
     Ok(())
 }
 
-/// Storage totals for the settings card.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct StatsResponse {
-    pub files: i64,
-    pub bytes: i64,
-}
-
-pub async fn handle_stats(db: &Db) -> ApiResult<StatsResponse> {
-    let (files, bytes) = db.storage_stats().await?;
-    Ok(StatsResponse { files, bytes })
-}
-
 /// Human readable byte size, used by nothing on the server but handy in tests.
 #[allow(dead_code)]
 pub fn format_bytes(bytes: i64) -> String {

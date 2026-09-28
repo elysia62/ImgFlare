@@ -124,35 +124,16 @@ async function verifyLocalReferences(dist) {
 }
 
 /**
- * Pull `ORIGIN` out of `wrangler.toml` and return its host.
- *
- * Falls back to `localhost` when the value is still the shipped placeholder or
- * the file cannot be parsed — the userscript stays installable either way.
- */
-async function readOriginHost() {
-  try {
-    const text = await Bun.file(`${root}/wrangler.toml`).text();
-    const m = text.match(/^\s*ORIGIN\s*=\s*"([^"]+)"/m);
-    if (!m) return null;
-    const host = new URL(m[1]).hostname;
-    if (!host || host.includes("YOUR-")) return null;
-    return host;
-  } catch {
-    return null;
-  }
-}
-
-/**
  * The `@connect` directive(s) to emit.
  *
- * Tampermonkey only allows requests to hosts listed here, so the deployed host
- * must appear. `localhost` is added on top of it so the same build also works
- * against `wrangler dev`.
+ * The deployed host is no longer known at build time: it is whatever
+ * `workers.dev` name or custom domain the operator ends up with, and the user
+ * types it into the script menu at runtime. A fixed host would make Tampermonkey
+ * block every request, so the script declares `*` and relies on the user's own
+ * configuration for the actual target.
  */
-function connectDirectives(host) {
-  const lines = [`// @connect      ${host ?? "localhost"}`];
-  if (host && host !== "localhost") lines.push("// @connect      localhost");
-  return lines.join("\n");
+function connectDirectives() {
+  return ["// @connect      *", "// @connect      localhost"].join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -162,14 +143,11 @@ async function buildUserscript() {
   const dir = `${root}/userscript`;
   const outfile = `${dir}/image-uploader.user.js`;
 
-  // `@connect` must name the user's own host, or Tampermonkey blocks every
-  // request. Read it out of `wrangler.toml` so the header stays in sync with
-  // whatever they deployed, instead of shipping a placeholder that silently
-  // breaks the script.
-  const originHost = await readOriginHost();
+  // The script is pointed at the user's own Worker through its settings menu,
+  // so `@connect` cannot name a specific host.
   const header = (await Bun.file(`${dir}/metadata.txt`).text()).replace(
     /^\/\/ @connect\s+YOUR-WORKER-HOST\s*$/m,
-    connectDirectives(originHost),
+    connectDirectives(),
   );
 
   await build({

@@ -201,10 +201,6 @@ pub async fn verify_api_token(db: &Db, presented: &str) -> ApiResult<Principal> 
         .await?
         .ok_or(ApiError::Unauthorized)?;
 
-    if record.revoked_at.is_some() {
-        return Err(ApiError::Forbidden("token_revoked"));
-    }
-
     Ok(Principal::Token { id: record.id })
 }
 
