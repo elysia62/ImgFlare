@@ -210,7 +210,7 @@ try {
       })().catch(scriptFailure);
     },
   });
-  assert.ok(handlers.has('paste'));
+  assert.deepEqual([...handlers.keys()], ['paste']);
   handlers.get('paste')({
     clipboardData: { files: [new File([png], 'script.png', { type: 'image/png' })], items: [] },
     preventDefault() {}, stopPropagation() {},
@@ -218,7 +218,7 @@ try {
   let timer;
   try {
     const markdown = await Promise.race([done, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('userscript upload timed out')), 5000); })]);
-    assert.match(markdown, /^!\[script.png\]\(https:\/\/imgflare.test\/i\//);
+    assert.match(markdown, /^!\[粘贴图片\]\(https:\/\/imgflare.test\/i\//);
     assert.deepEqual(requestedPaths, ['/api/upload/check', '/api/upload']);
   } finally { clearTimeout(timer); }
   const form = new FormData();

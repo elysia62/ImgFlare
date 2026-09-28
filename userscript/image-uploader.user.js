@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         个人图床上传助手
 // @namespace    imgflare
-// @version      2.0.0
-// @description  在任意网页 Ctrl+V 粘贴或拖入图片，自动上传到自建图床并插入 Markdown。支持 SHA-256 去重、批量上传、失败重试。
+// @version      2.0.1
+// @description  在网页 Ctrl+V 粘贴图片，自动上传到自建图床并插入 Markdown。支持 SHA-256 去重、批量粘贴、失败重试。
 // @author       you
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
@@ -95,7 +95,7 @@
       method: "POST",
       body: { sha256 }
     });
-    if (check.exists && check.file) return check.file.markdown;
+    if (check.exists && check.file) return check.file.url;
     let lastError = null;
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
       if (attempt > 0) await delay(400 * attempt);
@@ -107,7 +107,7 @@
           formData: form,
           headers: { "X-File-SHA256": sha256 }
         });
-        return result.file.markdown;
+        return result.file.url;
       } catch (error) {
         lastError = error;
         const message = error instanceof Error ? error.message : "upload_failed";
@@ -134,8 +134,8 @@
       const item = pending.shift();
       if (!item) break;
       running += 1;
-      void uploadOne(item.file).then((markdown) => {
-        insertMarkdown(markdown, item.target);
+      void uploadOne(item.file).then((url) => {
+        insertMarkdown(`![\u7C98\u8D34\u56FE\u7247](${url})`, item.target);
       }).catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
         console.error(`[imgflare] ${item.file.name} \u4E0A\u4F20\u5931\u8D25\uFF1A${message}`);
@@ -223,15 +223,6 @@
       },
       true
     );
-    for (const type of ["dragenter", "dragover"]) {
-      document.addEventListener(type, (event) => event.preventDefault());
-    }
-    document.addEventListener("drop", (event) => {
-      const files = Array.from(event.dataTransfer?.files ?? []).filter(looksLikeImage);
-      if (files.length === 0) return;
-      event.preventDefault();
-      enqueue(files);
-    });
   }
   function delay(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));

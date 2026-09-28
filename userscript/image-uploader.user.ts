@@ -1,7 +1,7 @@
 import { IMAGE_EXT, renamePastedImage, sha256Hex } from '../shared/image.js';
 import type { ApiResponse, DuplicateCheckResult, UploadResult } from '../frontend/src/types.js';
 
-/** Paste or drop images to upload with API_TOKEN and insert Markdown. */
+/** Paste images to upload with API_TOKEN and insert Markdown. */
 
 /* 油猴 API 的最小类型声明                                                    */
 
@@ -126,7 +126,7 @@ function isOwnPanel(): boolean {
 /* 上传                                                                       */
 
 /**
- * 上传一个文件，返回可直接粘贴的 Markdown。
+ * 上传一个文件，返回图片地址。
  *
  * 先按 SHA-256 查重；已存在就直接复用，不重复占用空间。
  */
@@ -137,7 +137,7 @@ async function uploadOne(file: File): Promise<string> {
     method: 'POST',
     body: { sha256 },
   });
-  if (check.exists && check.file) return check.file.markdown;
+  if (check.exists && check.file) return check.file.url;
 
   let lastError: unknown = null;
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
@@ -151,7 +151,7 @@ async function uploadOne(file: File): Promise<string> {
         formData: form,
         headers: { 'X-File-SHA256': sha256 },
       });
-      return result.file.markdown;
+      return result.file.url;
     } catch (error) {
       lastError = error;
       const message = error instanceof Error ? error.message : 'upload_failed';
@@ -195,8 +195,8 @@ function pump(): void {
     running += 1;
 
     void uploadOne(item.file)
-      .then((markdown) => {
-        insertMarkdown(markdown, item.target);
+      .then((url) => {
+        insertMarkdown(`![粘贴图片](${url})`, item.target);
       })
       .catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
@@ -278,7 +278,7 @@ async function copyToClipboard(text: string): Promise<void> {
   }
 }
 
-/* 输入方式：粘贴与拖拽                                                       */
+/* 粘贴                                                                       */
 
 /** System file copies and browser image copies expose different clipboard fields. */
 function imagesFromClipboard(event: ClipboardEvent): File[] {
@@ -327,16 +327,6 @@ function installHandlers(): void {
     true,
   );
 
-  // 拖拽时必须 preventDefault，否则浏览器会直接打开文件。
-  for (const type of ['dragenter', 'dragover'] as const) {
-    document.addEventListener(type, (event) => event.preventDefault());
-  }
-  document.addEventListener('drop', (event) => {
-    const files = Array.from(event.dataTransfer?.files ?? []).filter(looksLikeImage);
-    if (files.length === 0) return;
-    event.preventDefault();
-    enqueue(files);
-  });
 }
 
 /* 启动                                                                       */
