@@ -5,9 +5,9 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, write
 import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
-const STAGING = `${ROOT}/build/.staging`;
-const OUT_DIR = `${ROOT}/build/worker`;
-const TOOLS = `${ROOT}/build/.tools`;
+const STAGING = `${ROOT}/.cache/worker`;
+const OUT_DIR = `${ROOT}/dist/worker`;
+const TOOLS = `${ROOT}/.cache/tools`;
 
 const log = (msg) => console.log(`[build:worker] ${msg}`);
 
@@ -98,30 +98,6 @@ async function resolveWasmBindgen() {
   return bin;
 }
 
-function shimSource() {
-  return `import { WorkerEntrypoint } from "cloudflare:workers";
-import wasmModule from "./index_bg.wasm";
-import * as bindings from "./index_bg.js";
-
-// Workers imports a WebAssembly.Module; instantiate it before calling Rust.
-const instance = new WebAssembly.Instance(wasmModule, { "./index_bg.js": bindings });
-bindings.__wbg_set_wasm(instance.exports);
-instance.exports.__wbindgen_start();
-
-class Entrypoint extends WorkerEntrypoint {
-  fetch(request) {
-    return bindings.fetch(request, this.env, this.ctx);
-  }
-
-  scheduled(event) {
-    return bindings.scheduled(event, this.env, this.ctx);
-  }
-}
-
-export default Entrypoint;
-`;
-}
-
 function run(cmd, args) {
   const r = spawnSync(cmd, args, { cwd: ROOT, stdio: "inherit" });
   if (r.error) fail(`failed to run ${cmd}: ${r.error.message}`);
@@ -138,14 +114,23 @@ function runWasmBindgen(bin) {
   rmSync(STAGING, { recursive: true, force: true });
   mkdirSync(STAGING, { recursive: true });
 
-  const wasm = `${ROOT}/target/wasm32-unknown-unknown/release/imgflare.wasm`;
+  const metadata = spawnSync("cargo", ["metadata", "--locked", "--no-deps", "--format-version=1"], {
+    cwd: ROOT,
+    encoding: "utf8",
+  });
+  if (metadata.error || metadata.status !== 0) {
+    fail(`could not resolve Cargo output directory: ${metadata.error?.message ?? metadata.stderr}`);
+  }
+  const targetDir = JSON.parse(metadata.stdout).target_directory;
+  const wasm = `${targetDir}/wasm32-unknown-unknown/release/imgflare.wasm`;
   if (!existsSync(wasm)) fail(`expected ${wasm} to exist after cargo build`);
 
   run(bin, ["--target", "bundler", "--no-typescript", "--out-name", "index", "--out-dir", STAGING, wasm]);
 }
 
 function writeShim() {
-  writeFileSync(`${STAGING}/worker-shim.mjs`, shimSource());
+  writeFileSync(`${STAGING}/worker-shim.mjs`, readFileSync(`${ROOT}/backend/entry.mjs`));
+  writeFileSync(`${STAGING}/request-limits.mjs`, readFileSync(`${ROOT}/backend/request-limits.mjs`));
 }
 
 async function bundle() {
@@ -182,7 +167,7 @@ async function main() {
   const size = statSync(`${OUT_DIR}/index_bg.wasm`).size;
   const shim = statSync(`${OUT_DIR}/shim.mjs`).size;
   log(`done — index_bg.wasm ${(size / 1024).toFixed(0)} KB, shim.mjs ${(shim / 1024).toFixed(0)} KB`);
-  log(`entry point: build/worker/shim.mjs`);
+  log(`entry point: dist/worker/shim.mjs`);
 }
 
 await main();

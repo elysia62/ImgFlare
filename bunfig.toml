@@ -2,4 +2,4 @@
 exact = true
 
 [install.cache]
-dir = ".bun-cache"
+dir = ".cache/bun"

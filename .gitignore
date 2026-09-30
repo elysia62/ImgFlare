@@ -1,11 +1,7 @@
-# Build output
-/target
-/build
-/dist
-/node_modules
-
-# Bun
-/.bun-cache
+# Dependencies, build output and caches
+/node_modules/
+/dist/
+/.cache/
 
 # Wrangler
 .wrangler/

@@ -6,6 +6,7 @@ description = "A minimal personal image host: Rust/Wasm on Cloudflare Workers wi
 license = "MIT"
 
 [lib]
+path = "backend/src/lib.rs"
 crate-type = ["cdylib"]
 
 [dependencies]

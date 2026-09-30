@@ -28,6 +28,6 @@
     "resolveJsonModule": true,
     "noEmit": true
   },
-  "include": ["frontend/src/**/*.ts", "userscript/**/*.ts", "shared/**/*.ts"],
-  "exclude": ["node_modules", "dist", "build"]
+  "include": ["web/frontend/src/**/*.ts", "web/userscript/**/*.ts", "web/shared/**/*.ts"],
+  "exclude": ["node_modules", "dist", ".cache"]
 }
