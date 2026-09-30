@@ -40,17 +40,6 @@
             <span id="files-count" class="tab-badge" hidden></span>
           </button>
           <button
-            id="tab-tokens"
-            class="tab"
-            type="button"
-            role="tab"
-            aria-selected="false"
-            aria-controls="panel-tokens"
-            data-tab="tokens"
-          >
-            API Token
-          </button>
-          <button
             id="tab-settings"
             class="tab"
             type="button"
@@ -160,40 +149,12 @@
       </section>
       <section
         class="panel"
-        id="panel-tokens"
-        role="tabpanel"
-        aria-labelledby="tab-tokens"
-      >
-        <div class="section-head">
-          <h2 class="section-title">API Token</h2>
-        </div>
-        <p class="section-desc">
-          用于油猴脚本或外部工具上传。Token 仅具备上传和查重权限，不能删除图片或访问控制台。
-        </p>
-
-        <form id="token-form" class="token-form" autocomplete="off">
-          <input
-            id="token-name"
-            class="input"
-            type="text"
-            placeholder="名称，例如：Tampermonkey 脚本"
-            maxlength="64"
-            required
-          />
-          <button class="btn btn-primary" type="submit">生成 Token</button>
-        </form>
-
-        <div id="new-token" class="new-token" hidden></div>
-        <div id="token-list" class="token-list"></div>
-      </section>
-      <section
-        class="panel"
         id="panel-settings"
         role="tabpanel"
         aria-labelledby="tab-settings"
       >
         <div class="section-head">
-          <h2 class="section-title">系统设置</h2>
+          <h2 class="section-title">设置</h2>
         </div>
 
         <div class="card-inner">
@@ -216,10 +177,33 @@
 
         <div class="card-inner">
           <div class="card-inner-head">
+            <h3 class="sub-title">API Token</h3>
+          </div>
+          <p class="hint">
+            用于油猴脚本或外部工具上传。Token 仅具备上传和查重权限，不能删除图片或访问控制台。
+          </p>
+          <form id="token-form" class="token-form" autocomplete="off">
+            <input
+              id="token-name"
+              class="input"
+              type="text"
+              placeholder="名称，例如：Tampermonkey 脚本"
+              aria-label="Token 名称"
+              maxlength="64"
+              required
+            />
+            <button class="btn btn-primary" type="submit">生成 Token</button>
+          </form>
+          <div id="new-token" class="new-token" aria-live="polite" hidden></div>
+          <div id="token-list" class="token-list"></div>
+        </div>
+
+        <div class="card-inner">
+          <div class="card-inner-head">
             <h3 class="sub-title">油猴脚本 (Userscript)</h3>
           </div>
           <ul class="plain-list">
-            <li>先在「API Token」标签页生成一个访问 Token。</li>
+            <li>在上方生成一个访问 Token，并复制保存。</li>
             <li>安装 <code>web/userscript/image-uploader.user.js</code>。</li>
             <li>编辑脚本顶部的 <code>API_URL</code>（<code id="api-base-hint">—</code>）和 <code>API_TOKEN</code>，保存即可；无需登录面板。</li>
           </ul>

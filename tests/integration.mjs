@@ -126,7 +126,6 @@ try {
   const db = await mf.getD1Database('DB');
   const schema = await readFile(resolve(root, 'backend/migrations/init_01.sql'), 'utf8');
   await executeScript(db, schema);
-  await executeScript(db, await readFile(resolve(root, 'backend/migrations/init_02.sql'), 'utf8'));
   const exportQuery = await readFile(resolve(root, 'backend/src/backup.sql'), 'utf8');
   assert.deepEqual((await db.prepare(exportQuery).bind(8388608, 20000).all()).results, []);
   assert.deepEqual(loadConfig(bindings, '').missing, []);
@@ -153,16 +152,15 @@ try {
   assert.equal((await call('/api/files', { headers: adminHeaders })).status, 200);
   assert.equal((await call('/api/tokens', { method: 'POST', headers: { Cookie: cookie }, body: json({ name: 'denied' }) })).status, 403);
 
-  // The formerly public signing key must no longer grant administrator access.
-  const legacyKey = 'imgflare-session-7f3c9a1e6b2d48c0a5e7f91b3d6c8a0e4f2b7d9c1a6e8b0d';
+  // Invalid signatures and expired sessions cannot grant administrator access.
   const now = Date.now();
   for (const forged of [
-    signCookie(legacyKey, { iat: now, exp: now + 600_000, nonce: 'legacy' }),
+    signCookie('wrong-signing-secret-for-test', { iat: now, exp: now + 600_000, nonce: 'invalid' }),
     signCookie(bindings.SESSION_SECRET, { iat: now - 2000, exp: now - 1000, nonce: 'expired' }),
   ]) {
     assert.equal((await call('/api/files', { headers: { Cookie: forged } })).status, 401);
   }
-  console.log('✓ Panel login, Turnstile, CSRF, expired and legacy cookies');
+  console.log('✓ Panel login, Turnstile, CSRF, invalid signatures and expired cookies');
 
   const tokenResponse = await call('/api/tokens', { method: 'POST', headers: adminHeaders, body: json({ name: "油猴 ' token\n\u0000" }) });
   assert.equal(tokenResponse.status, 200);
@@ -282,6 +280,8 @@ try {
   }
   const page1 = (await (await call('/api/files?q=cursor-test&limit=2', {headers:adminHeaders})).json()).data;
   assert.deepEqual(page1.files.map(f=>f.id),['cursor-c','cursor-b']);
+  assert.ok(!('offset' in page1));
+  assert.equal((await call('/api/files?offset=1', {headers:adminHeaders})).status,400);
   await db.prepare('INSERT INTO files(id,sha256,r2_key,original_name,content_type,size,created_at) VALUES (?,?,?,?,?,?,?)')
     .bind('cursor-new','cursor-new','i/cursor-new.png','cursor-test.png','image/png',1,Date.now()+20000).run();
   inserted.push('cursor-new');

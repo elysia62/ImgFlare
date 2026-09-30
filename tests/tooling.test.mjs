@@ -110,7 +110,7 @@ test('dev command watches real files, ignores generated output and shuts down', 
     await writeFile(join(root,'web/styles.css'),'changed css');
     await writeFile(join(root,'web/shared/image.ts'),'changed shared source');
     await writeFile(join(root,'backend/source.rs'),'changed Rust');
-    await writeFile(join(root,'backend/migrations/init_02.sql'),'new migration');
+    await writeFile(join(root,'backend/migrations/init_03.sql'),'new migration');
     await until(async()=> (await commands()).some(command=>command.args.includes('build:assets')));
     const calls=await commands();
     assert.equal(calls.filter(call=>call.args.includes('build:worker')).length,1);

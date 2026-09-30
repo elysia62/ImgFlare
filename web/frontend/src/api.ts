@@ -161,14 +161,12 @@ export async function uploadFile(
 export function listFiles(options: {
   q?: string;
   limit?: number;
-  offset?: number;
   cursor?: string;
   signal?: AbortSignal;
 }): Promise<FileListResponse> {
   const params = new URLSearchParams();
   if (options.q) params.set('q', options.q);
   if (options.limit !== undefined) params.set('limit', String(options.limit));
-  if (options.offset !== undefined) params.set('offset', String(options.offset));
 
   if (options.cursor) params.set('cursor', options.cursor);
   const query = params.toString();

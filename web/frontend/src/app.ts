@@ -197,16 +197,15 @@ export async function initApp(): Promise<void> {
 
 const TAB_KEY = 'pih_active_tab';
 
-/** Switch between the four panels, remembering the choice across reloads. */
-function initTabs(): void {
+/** Switch between panels, remembering the choice across reloads. */
+export function initTabs(): void {
   const tabs = Array.from(document.querySelectorAll<HTMLButtonElement>('.tab'));
 
-  function activate(name: string, focus = false): void {
+  function activate(name: string): void {
     for (const tab of tabs) {
       const active = tab.dataset.tab === name;
       tab.classList.toggle('is-active', active);
       tab.setAttribute('aria-selected', String(active));
-      if (active && focus) tab.focus();
     }
     for (const panel of document.querySelectorAll<HTMLElement>('.panel')) {
       panel.classList.toggle('is-active', panel.id === `panel-${name}`);
@@ -222,8 +221,7 @@ function initTabs(): void {
     tab.addEventListener('click', () => activate(tab.dataset.tab ?? 'upload'));
   }
 
-  // Deep links like `/ #tokens` still work.
-  const fromHash = window.location.hash.replace('#', '');
+  const fromHash = window.location.hash.slice(1);
   const known = tabs.map((t) => t.dataset.tab);
   const initial =
     (known.includes(fromHash) ? fromHash : null) ??
@@ -483,7 +481,6 @@ async function refreshBackup(): Promise<void> {
       ['状态', '正常'],
       ['最近备份', formatUtc(data.uploadedAt)],
       ['备份大小', formatBytes(data.size)],
-      ['SHA-256', data.sha256 ?? '—'],
       ['定时任务', data.cron],
     ];
 

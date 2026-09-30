@@ -56,7 +56,6 @@ export interface FileListResponse {
   files: FileInfo[];
   total: number;
   limit: number;
-  offset: number;
   nextCursor: string | null;
 }
 

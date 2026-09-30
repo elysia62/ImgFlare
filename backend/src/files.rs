@@ -8,13 +8,12 @@ use serde::{Deserialize, Serialize};
 
 /// Query string accepted by `GET /api/files`.
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ListQuery {
     #[serde(default)]
     pub q: Option<String>,
     #[serde(default)]
     pub limit: Option<u32>,
-    #[serde(default)]
-    pub offset: Option<u32>,
     #[serde(default)]
     pub cursor: Option<String>,
 }
@@ -28,28 +27,22 @@ pub struct ListResponse {
     pub files: Vec<FileInfo>,
     pub total: i64,
     pub limit: u32,
-    pub offset: u32,
     pub next_cursor: Option<String>,
 }
 
 /// Paginated listing, newest first.
 ///
-/// Uses a stable (created_at, id) cursor, with legacy offset support.
+/// Uses a stable (created_at, id) cursor.
 pub async fn handle_list(db: &Db, origin: &str, query: ListQuery) -> ApiResult<ListResponse> {
     let limit = query.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
-    let offset = query.offset.unwrap_or(0);
 
     let search = query.q.as_deref().map(str::trim).filter(|s| !s.is_empty());
 
     let cursor = query.cursor.as_deref().map(decode_cursor).transpose()?;
-    if cursor.is_some() && offset != 0 {
-        return Err(ApiError::BadRequest("invalid_cursor"));
-    }
     let (mut rows, total) = db
         .list_files(
             search,
             limit,
-            offset,
             cursor.as_ref().map(|(t, id)| (*t, id.as_str())),
         )
         .await?;
@@ -68,7 +61,6 @@ pub async fn handle_list(db: &Db, origin: &str, query: ListQuery) -> ApiResult<L
             .collect(),
         total,
         limit,
-        offset,
         next_cursor,
     })
 }

@@ -36,7 +36,7 @@ declare function GM_xmlhttpRequest(details: GmRequestDetails): void;
 /** 图床地址（含 https://）和后台生成的 API Token。 */
 const API_URL = 'https://img.example.com';
 
-/** 后台「API Token」页生成，只显示一次，形如 cph_xxxxxxxx。 */
+/** 后台「设置」页生成，只显示一次，形如 cph_xxxxxxxx。 */
 const API_TOKEN = 'cph_在这里填入你的Token';
 
 /** 同时上传几个文件。 */

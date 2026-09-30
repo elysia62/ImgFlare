@@ -36,7 +36,7 @@
 | `R2_SECRET_ACCESS_KEY` | R2 Secret Access Key | 密钥 |
 | `R2_BUCKET` | R2 桶名 | 变量 |
 
-部署脚本将这九项配置写入 Worker，并执行 D1 迁移。R2 使用 S3 API，不需要绑定。升级已有部署时，先执行 `bun run db:migrate:remote` 应用 [init_02.sql](backend/migrations/init_02.sql)，再部署新版本；迁移对旧 Worker 兼容。
+部署脚本将这九项配置写入 Worker，并执行 D1 迁移。R2 使用 S3 API，不需要绑定。[init_01.sql](backend/migrations/init_01.sql) 完整初始化数据库。后续结构变更从 `init_03.sql` 开始追加迁移，不复用已执行过的迁移文件名。
 
 `SESSION_SECRET` 生成一次后保持不变；修改它会使已有登录失效。会话有效期为 7 天。
 
@@ -73,7 +73,7 @@ bun run dev
 
 ## 油猴脚本
 
-安装 [web/userscript/image-uploader.user.js](web/userscript/image-uploader.user.js)，修改脚本中的两项配置：
+在面板的「设置」中生成并复制 API Token，然后安装 [web/userscript/image-uploader.user.js](web/userscript/image-uploader.user.js)，修改脚本中的两项配置：
 
 ```js
 const API_URL = 'https://你的图床域名';
@@ -111,7 +111,7 @@ const API_TOKEN = 'cph_后台生成的Token';
 
 图片的扩展名必须与文件头一致。SVG 响应带 CSP sandbox。管理写操作校验 Origin，显式 API Key 按上传权限处理，不回退到 Cookie。
 
-列表响应新增 `nextCursor`，将它作为下一页的 `cursor`，返回 `null` 表示结束。排序按 `created_at DESC, id DESC`，并发插入新图片不会挤动后续页。旧的 `offset` 参数仍可使用，不能与游标同时传入。
+列表使用游标分页：将响应的 `nextCursor` 作为下一页的 `cursor`，返回 `null` 表示结束。排序按 `created_at DESC, id DESC`，并发插入新图片不会挤动后续页。查询参数仅接受 `q`、`limit` 和 `cursor`。
 
 图片响应包含 ETag、Last-Modified、Content-Length 和 Accept-Ranges。浏览器缓存 60 秒，边缘 Cache API 缓存一天；每次读取边缘缓存前先检查 D1，已删除图片立即返回 404。浏览器已保存的副本可能在 60 秒内继续显示。
 

@@ -48,7 +48,6 @@ impl Db {
     }
 
     /// Export the known application schema and a consistent snapshot of its data.
-    /// D1's legacy dump API only supports alpha databases and emits SQLite bytes.
     pub async fn export_sql(&self) -> ApiResult<Vec<u8>> {
         const MAX_DATA_BYTES: u32 = 8 * 1024 * 1024;
         const MAX_ROWS: u32 = 20_000;
@@ -213,12 +212,11 @@ impl Db {
         Ok(())
     }
 
-    /// Stable keyset paging; legacy offset is retained for existing API clients.
+    /// Stable keyset paging by creation time and file ID.
     pub async fn list_files(
         &self,
         search: Option<&str>,
         limit: u32,
-        offset: u32,
         cursor: Option<(i64, &str)>,
     ) -> ApiResult<(Vec<FileRecord>, i64)> {
         let pattern = search
@@ -229,8 +227,8 @@ impl Db {
         let (time, id) = cursor
             .map(|(t, id)| (JsValue::from_f64(t as f64), JsValue::from_str(id)))
             .unwrap_or((JsValue::NULL, JsValue::NULL));
-        let page = self.prepare("SELECT * FROM files WHERE (?1 IS NULL OR original_name LIKE ?1 ESCAPE '\\') AND (?2 IS NULL OR created_at < ?2 OR (created_at = ?2 AND id < ?3)) ORDER BY created_at DESC,id DESC LIMIT ?4 OFFSET ?5")
-            .bind(&[optional(&pattern),time,id,JsValue::from_f64((limit+1) as f64),JsValue::from_f64(offset as f64)])?;
+        let page = self.prepare("SELECT * FROM files WHERE (?1 IS NULL OR original_name LIKE ?1 ESCAPE '\\') AND (?2 IS NULL OR created_at < ?2 OR (created_at = ?2 AND id < ?3)) ORDER BY created_at DESC,id DESC LIMIT ?4")
+            .bind(&[optional(&pattern),time,id,JsValue::from_f64((limit+1) as f64)])?;
         let results = self.inner.batch(vec![count, page]).await?;
         let total = results[0]
             .results::<CountRow>()?

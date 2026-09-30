@@ -2,7 +2,8 @@ import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { ApiError, parseUploadResult, uploadFile } from '../web/frontend/src/api.ts';
 import { FileBrowser } from '../web/frontend/src/files.ts';
 import { UploadQueue } from '../web/frontend/src/upload.ts';
-import { renderQueue } from '../web/frontend/src/app.ts';
+import { initTabs, renderQueue } from '../web/frontend/src/app.ts';
+import { copyText } from '../web/frontend/src/clipboard.ts';
 import { makeThumbnail } from '../web/shared/thumbnail.ts';
 
 // A small DOM boundary; the queue, API client and browser are the real modules.
@@ -10,6 +11,17 @@ class Element extends EventTarget {
   children: Element[] = [];
   parent: Element | null = null;
   className = '';
+  id = '';
+  dataset: Record<string, string> = {};
+  classList = {
+    toggle: (name: string, force: boolean) => {
+      const classes = new Set(this.className.split(' ').filter(Boolean));
+      if (force) classes.add(name);
+      else classes.delete(name);
+      this.className = [...classes].join(' ');
+      return force;
+    },
+  };
   textContent = '';
   value = '';
   hidden = false;
@@ -51,7 +63,7 @@ class Xhr extends EventTarget {
   setRequestHeader() {}
   send() {}
 }
-const originals = new Map(['document','window','fetch','XMLHttpRequest'].map(key => [key,Object.getOwnPropertyDescriptor(globalThis,key)]));
+const originals = new Map(['document','window','navigator','fetch','XMLHttpRequest'].map(key => [key,Object.getOwnPropertyDescriptor(globalThis,key)]));
 beforeEach(() => {
   Object.assign(globalThis, {
     document: { createElement: () => new Element(), createTextNode: (text: string) => Object.assign(new Element(),{textContent:text}) },
@@ -72,7 +84,54 @@ function deferred<T>() {
 }
 const tick = () => new Promise(resolve => setTimeout(resolve,0));
 const file = (id: string) => ({id,sha256:'a'.repeat(64),name:id+'.png',contentType:'image/png',size:100,url:'https://test/i/'+id+'.png',markdown:'image',createdAt:1,thumbnailUrl:null});
-const page = (ids: string[], cursor: string | null = null) => Response.json({success:true,data:{files:ids.map(file),total:3,limit:24,offset:0,nextCursor:cursor}});
+const page = (ids: string[], cursor: string | null = null) => Response.json({success:true,data:{files:ids.map(file),total:3,limit:24,nextCursor:cursor}});
+
+test.each([
+  {hash:'#settings', saved:'files', active:'settings'},
+  {hash:'', saved:'settings', active:'settings'},
+  {hash:'#files', saved:'settings', active:'files'},
+  {hash:'#unknown', saved:'unknown', active:'upload'},
+])('tab navigation restores $hash / $saved as $active and still switches', ({hash,saved,active}) => {
+  const names = ['upload','files','settings'];
+  const tabs = names.map(name => Object.assign(new Element(), {dataset:{tab:name}}));
+  const panels = names.map(name => Object.assign(new Element(), {id:`panel-${name}`}));
+  const stored = new Map([['pih_active_tab',saved]]);
+  Object.assign(document, {querySelectorAll: (selector: string) => selector === '.tab' ? tabs : panels});
+  Object.assign(window, {
+    location: {hash},
+    localStorage: {
+      getItem: (key: string) => stored.get(key) ?? null,
+      setItem: (key: string, value: string) => stored.set(key,value),
+    },
+  });
+  initTabs();
+  for (const [index,name] of names.entries()) {
+    expect(tabs[index]!.className.includes('is-active')).toBe(name === active);
+    expect((tabs[index] as any)['aria-selected']).toBe(String(name === active));
+    expect(panels[index]!.className.includes('is-active')).toBe(name === active);
+  }
+  expect(stored.get('pih_active_tab')).toBe(active);
+  tabs[0]!.dispatchEvent(new Event('click'));
+  expect(stored.get('pih_active_tab')).toBe('upload');
+  expect(panels[0]!.className).toBe('is-active');
+  expect(panels[2]!.className).toBe('');
+});
+
+test('clipboard writes report success or failure without changing the page', async () => {
+  const written: string[] = [];
+  const clipboard = {writeText: async (text: string) => { written.push(text); }};
+  Object.defineProperty(globalThis,'navigator',{configurable:true,value:{clipboard}});
+  Object.assign(window,{isSecureContext:true});
+  expect(await copyText('token')).toBe(true);
+  expect(written).toEqual(['token']);
+  clipboard.writeText = async () => { throw new DOMException('Denied','NotAllowedError'); };
+  expect(await copyText('denied')).toBe(false);
+  Object.assign(window,{isSecureContext:false});
+  expect(await copyText('insecure')).toBe(false);
+  Object.defineProperty(globalThis,'navigator',{configurable:true,value:{}});
+  Object.assign(window,{isSecureContext:true});
+  expect(await copyText('unavailable')).toBe(false);
+});
 
 test('search supersedes an in-flight load and ignores late results and finalizers', async () => {
   const requests: {path:string;signal:AbortSignal;result:ReturnType<typeof deferred<Response>>}[] = [];
