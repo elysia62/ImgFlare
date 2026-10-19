@@ -20,7 +20,7 @@
 |---|---|
 | Build command | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh -s -- -y --profile minimal --default-toolchain stable && . "$HOME/.cargo/env" && bun run build` |
 | Deploy command | `bun run deploy` |
-| Build variable | `BUN_VERSION=1.4.2` |
+| Build variable | `BUN_VERSION=1.4.3` |
 
 在 **Settings → Build → Build variables and secrets** 中填写：
 
@@ -46,7 +46,7 @@
 
 ## 本地开发
 
-需要 Bun 1.4.2、Node.js 22+ 和 Rust（含 `wasm32-unknown-unknown`）。构建脚本会下载与 Cargo.lock 一致的 wasm-bindgen。
+需要 Bun 1.4.3、Node.js 22+ 和 Rust（含 `wasm32-unknown-unknown`）。构建脚本会下载与 Cargo.lock 一致的 wasm-bindgen。
 
 ```sh
 bun install --frozen-lockfile
