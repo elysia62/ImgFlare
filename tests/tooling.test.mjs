@@ -95,7 +95,9 @@ test('dev command watches real files, ignores generated output and shuts down', 
     for (const name of ['Cargo.toml','Cargo.lock','web/styles.css','web/shared/image.ts','backend/source.rs']) await writeFile(join(root,name),'initial');
     const log=join(root,'commands.jsonl');
     const stub=`#!/usr/bin/env node\nimport {appendFileSync} from 'node:fs';\nimport {basename} from 'node:path';\nappendFileSync(process.env.TEST_COMMAND_LOG,JSON.stringify({command:basename(process.argv[1]),args:process.argv.slice(2)})+'\\n');\nif(process.argv.includes('dev')) setInterval(()=>{},1000);\n`;
-    for (const name of ['bun','bunx']) { await writeFile(join(root,'bin',name),stub); await chmod(join(root,'bin',name),0o755); }
+    // Only `bun` is stubbed: a regression back to the separate `bunx` binary
+    // would spawn something that never logs, and the waits below would fail.
+    for (const name of ['bun']) { await writeFile(join(root,'bin',name),stub); await chmod(join(root,'bin',name),0o755); }
     child=spawn(process.execPath,[join(root,'scripts/dev.mjs')],{
       env:{...process.env,PATH:join(root,'bin')+':'+process.env.PATH,TEST_COMMAND_LOG:log},
       stdio:['ignore','pipe','pipe'],

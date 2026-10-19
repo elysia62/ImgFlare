@@ -275,7 +275,8 @@ async fn store_thumbnail(db: &Db, r2: &R2, file: &worker::web_sys::File) -> ApiR
     let content_type = image_content_type(&file.name(), &prefix)
         .filter(|t| matches!(*t, "image/webp" | "image/png" | "image/jpeg"))
         .ok_or(ApiError::UnsupportedMediaType("unsupported_file_type"))?;
-    let ext = extension_for_type(content_type).unwrap();
+    let ext = extension_for_type(content_type)
+        .ok_or(ApiError::UnsupportedMediaType("unsupported_file_type"))?;
     let key = format!("t/{}.{}", public_image_id(), ext);
     db.stage_object(&key).await?;
     let digest = crate::payload::digest(file).await?;

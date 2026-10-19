@@ -13,6 +13,10 @@ pub const MAX_UPLOAD_SIZE: usize = 52_428_800;
 /// Session cookie lifetime. 7 days. Not a Cloudflare variable.
 pub const SESSION_TTL_SECONDS: i64 = 604_800;
 
+/// How long a staged R2 key is left alone before the cleanup job may delete it.
+/// Covers an upload whose D1 insert has not committed yet.
+pub const STAGED_OBJECT_GRACE_MS: i64 = 15 * 60 * 1000;
+
 pub struct R2Settings {
     pub account_id: String,
     pub access_key_id: String,

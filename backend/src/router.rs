@@ -452,7 +452,7 @@ async fn handle_run_backup(req: Request, env: &Env, cfg: &Config) -> ApiResult<R
     Ok(response::ok(serde_json::json!({
         "bytes": report.bytes,
         "sha256": report.sha256,
-        "finished_at": report.finished_at,
+        "finishedAt": report.finished_at,
     })))
 }
 

@@ -79,13 +79,13 @@ function main() {
     const childEnv = { ...process.env };
     for (const name of CONFIG_NAMES) delete childEnv[name];
     run(
-      "bunx",
-      ["wrangler", "deploy", "--keep-vars", "--secrets-file", file],
+      "bun",
+      ["x", "wrangler", "deploy", "--keep-vars", "--secrets-file", file],
       childEnv,
     );
     run(
-      "bunx",
-      ["wrangler", "d1", "migrations", "apply", "DB", "--remote"],
+      "bun",
+      ["x", "wrangler", "d1", "migrations", "apply", "DB", "--remote"],
       childEnv,
     );
   } finally {

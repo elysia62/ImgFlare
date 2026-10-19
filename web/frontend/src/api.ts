@@ -208,7 +208,7 @@ export function backupStatus(): Promise<BackupStatus> {
 export function runBackup(): Promise<{
   bytes: number;
   sha256: string;
-  finished_at: number;
+  finishedAt: number;
 }> {
   return request('/api/backup/run', { method: 'POST' });
 }

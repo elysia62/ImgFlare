@@ -24,7 +24,7 @@ function run(command, args) {
   });
 }
 const build = (kind) => run('bun', ['run', `build:${kind}`]);
-const migrate = () => run('bunx', ['wrangler','d1','migrations','apply','DB','--local']);
+const migrate = () => run('bun', ['x','wrangler','d1','migrations','apply','DB','--local']);
 const queue = rebuildQueue(async (changes) => {
   if (changes.has('migrations')) await migrate();
   if (changes.has('worker') || changes.has('migrations')) await build('worker');
@@ -62,7 +62,7 @@ try {
   ready = true;
   for (const kind of startupChanges) queue.change(kind);
   console.log('[dev] watching Rust, SQL, TypeScript, HTML and CSS');
-  await run('bunx', ['wrangler','dev', ...(process.argv.includes('--cron') ? ['--test-scheduled'] : [])]);
+  await run('bun', ['x','wrangler','dev', ...(process.argv.includes('--cron') ? ['--test-scheduled'] : [])]);
 } catch (error) {
   if (!stopping) { console.error(error); process.exitCode = 1; }
 } finally { stop(); }

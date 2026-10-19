@@ -231,7 +231,7 @@ pub async fn touch_token_throttled(db: &Db, token_id: &str) -> ApiResult<()> {
 /// Failed attempts allowed per IP inside [`LOGIN_WINDOW_MS`].
 const LOGIN_MAX_ATTEMPTS: i64 = 8;
 /// Sliding window length.
-const LOGIN_WINDOW_MS: i64 = 15 * 60 * 1000;
+pub const LOGIN_WINDOW_MS: i64 = 15 * 60 * 1000;
 
 /// Counter key for an IP. Unattributable requests share one bucket.
 fn login_key(ip: Option<&str>) -> String {

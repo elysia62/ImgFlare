@@ -16,7 +16,11 @@ pub fn ok_raw(body: serde_json::Value) -> Response {
 
 /// An empty `204`.
 pub fn no_content() -> Response {
-    Response::empty().unwrap().with_status(204)
+    // `Response::empty()` only fails if the runtime cannot construct a response
+    // at all, in which case there is nothing useful left to do.
+    Response::empty()
+        .unwrap_or_else(|_| Response::error("internal_error", 500).unwrap())
+        .with_status(204)
 }
 
 /// Serialise a JSON value with the right headers.

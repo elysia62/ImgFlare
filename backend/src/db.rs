@@ -146,7 +146,9 @@ impl Db {
         self.prepare("INSERT INTO cleanup_jobs(r2_key,not_before,created_at) VALUES (?,?,?)")
             .bind(&[
                 JsValue::from_str(key),
-                JsValue::from_f64((now + 900_000) as f64),
+                JsValue::from_f64(
+                    (now + crate::config::STAGED_OBJECT_GRACE_MS) as f64,
+                ),
                 JsValue::from_f64(now as f64),
             ])?
             .run()
@@ -368,7 +370,9 @@ impl Db {
     /// Sweep only expired login windows, preserving current throttling.
     pub async fn prune_login_failures(&self) -> ApiResult<()> {
         self.prepare("DELETE FROM kv_meta WHERE key LIKE 'login\\_fail:%' ESCAPE '\\' AND CAST(substr(value,instr(value,':')+1) AS INTEGER) < ?")
-            .bind(&[JsValue::from_f64((crate::utils::now_ms()-900_000) as f64)])?.run().await?;
+            .bind(&[JsValue::from_f64(
+                (crate::utils::now_ms() - crate::auth::LOGIN_WINDOW_MS) as f64,
+            )])?.run().await?;
         Ok(())
     }
 }

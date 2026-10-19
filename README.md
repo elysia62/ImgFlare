@@ -36,7 +36,9 @@
 | `R2_SECRET_ACCESS_KEY` | R2 Secret Access Key | 密钥 |
 | `R2_BUCKET` | R2 桶名 | 变量 |
 
-部署脚本将这九项配置写入 Worker，并执行 D1 迁移。R2 使用 S3 API，不需要绑定。[init_01.sql](backend/migrations/init_01.sql) 完整初始化数据库。后续结构变更从 `init_03.sql` 开始追加迁移，不复用已执行过的迁移文件名。
+部署脚本将这九项配置写入 Worker，并执行 D1 迁移。R2 使用 S3 API，不需要绑定。[init_01.sql](backend/migrations/init_01.sql) 是完整初始化基线；[schema.sql](backend/schema.sql) 是备份恢复用的同一份结构，两者必须保持一致，集成测试会校验。
+
+`init_02.sql` 已经并入 `init_01.sql` 后删除。已部署的数据库记录着执行过的迁移名，重放同一文件名会被跳过，所以结构变更从 `init_03.sql` 起继续编号，不复用已执行过的文件名。
 
 `SESSION_SECRET` 生成一次后保持不变；修改它会使已有登录失效。会话有效期为 7 天。
 
@@ -128,7 +130,7 @@ const API_TOKEN = 'cph_后台生成的Token';
 自动备份上限为五张表合计 20,000 行、SQL 数据语句 8 MiB。超过时使用：
 
 ```sh
-bunx wrangler d1 export imgflare-db --remote --output latest.sql
+bun x wrangler d1 export imgflare-db --remote --output latest.sql
 ```
 
 备份使用 [backend/schema.sql](backend/schema.sql) 中的完整当前结构；修改表结构时必须同步迁移、恢复结构和导出查询，集成测试会验证迁移与恢复结构一致。
@@ -136,8 +138,8 @@ bunx wrangler d1 export imgflare-db --remote --output latest.sql
 恢复到一个空数据库，再更新 Worker 的 D1 绑定。备份自带对应的迁移记录，恢复后无需重放已经包含的历史迁移：
 
 ```sh
-bunx wrangler d1 create imgflare-restored
-bunx wrangler d1 execute imgflare-restored --remote --file latest.sql
+bun x wrangler d1 create imgflare-restored
+bun x wrangler d1 execute imgflare-restored --remote --file latest.sql
 ```
 
 本地触发 Cron：
@@ -150,7 +152,6 @@ curl 'http://localhost:8787/cdn-cgi/local/scheduled?cron=0%204%20*%20*%20*'
 curl 'http://localhost:8787/cdn-cgi/local/scheduled?cron=*/15%20*%20*%20*%20*'
 ```
 
-请求日志包含方法、路径、状态、耗时和请求 ID，不记录凭证或查询参数；Workers Logs 默认按 10% 采样。内部错误仅写日志，可用 `bunx wrangler tail` 查看。R2 桶应保持私有，图片由 Worker 公开提供。
 
 ## 目录
 
