@@ -152,6 +152,7 @@ curl 'http://localhost:8787/cdn-cgi/local/scheduled?cron=0%204%20*%20*%20*'
 curl 'http://localhost:8787/cdn-cgi/local/scheduled?cron=*/15%20*%20*%20*%20*'
 ```
 
+请求日志包含方法、路径、状态、耗时和请求 ID，不记录凭证或查询参数。Workers Logs 默认关闭：控制台不会保留历史日志，需要排障时用 `bun x wrangler tail` 实时查看。如需在控制台查询历史记录，把 `wrangler.toml` 中 `[observability]` 的 `enabled` 改回 `true` 即可，查询字符串默认会被脱敏。R2 桶应保持私有，图片由 Worker 公开提供。
 
 ## 目录
 
