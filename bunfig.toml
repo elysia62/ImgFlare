@@ -3,3 +3,10 @@ exact = true
 
 [install.cache]
 dir = ".cache/bun"
+
+# wrangler pins workerd to an exact version, and its platform binaries
+# (@cloudflare/workerd-*) reach mirrors later than the main packages. A mirror
+# that carries workerd@X but not workerd-linux-64@X installs without the
+# executable, so this scope always comes from the canonical registry.
+[install.scopes]
+"@cloudflare" = { url = "https://registry.npmjs.org" }

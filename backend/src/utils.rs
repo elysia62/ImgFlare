@@ -2,7 +2,7 @@
 //!
 //! Everything here is wasm-friendly with no heavyweight dependencies.
 
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::{Digest, Sha256};
 
 type HmacSha256 = Hmac<Sha256>;
@@ -197,11 +197,11 @@ pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 
 /// Cryptographically random bytes from the platform CSPRNG.
 ///
-/// `getrandom` is compiled with the `js` feature so it routes to
+/// `getrandom` is compiled with the `wasm_js` feature so it routes to
 /// `crypto.getRandomValues` inside the Workers runtime.
 pub fn random_bytes(len: usize) -> Vec<u8> {
     let mut buf = vec![0u8; len];
-    getrandom::getrandom(&mut buf).expect("CSPRNG unavailable");
+    getrandom::fill(&mut buf).expect("CSPRNG unavailable");
     buf
 }
 
