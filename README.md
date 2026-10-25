@@ -123,7 +123,7 @@ const API_TOKEN = 'cph_后台生成的Token';
 
 ## 备份与恢复
 
-每日 04:00 UTC 将五张业务表（`files`、`api_tokens`、`kv_meta`、`cleanup_jobs`、`backup_snapshots`）导出为 SQL。先写入 `back/history/<时间>-<随机值>.sql`，再原子更新 `back/latest.sql`，保留最近 30 份历史备份。后台可手动备份和下载最新文件，历史文件可通过 R2 的私有访问密钥下载。
+每日 04:00 UTC 将五张业务表（`files`、`api_tokens`、`kv_meta`、`cleanup_jobs`、`backup_snapshots`）导出为 SQL。快照直接写在 `back/` 下，按日期命名（如 `back/2026-10-19.sql`），随后更新 `back/latest.sql`。备份保留 3 天，更早的文件由清理任务删除；同一天重复备份覆盖当天文件，不会堆积。后台可手动备份和下载最新文件，剩余几个快照可通过 R2 的私有访问密钥下载。
 
 备份包含业务表结构、索引及数据，不含图片文件和 Worker 密钥。R2 校验 SHA-256 后原子替换备份；导出或写入被拒绝时保留原文件，总共最多尝试 3 次。
 

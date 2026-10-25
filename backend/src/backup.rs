@@ -6,14 +6,31 @@ use crate::config::Config;
 use crate::db::Db;
 use crate::error::{ApiError, ApiResult};
 use crate::r2::{PutOptions, R2};
-use crate::utils::{now_ms, random_token, sha256_hex};
+use crate::utils::{now_ms, sha256_hex};
 use worker::{Delay, Env};
 
-/// Latest backup alias; previous snapshots live under back/history/.
+/// Latest backup alias, always pointing at the most recent complete dump.
 pub const LATEST_KEY: &str = "back/latest.sql";
+
+/// A dated snapshot is kept for this many days, then deleted.
+pub const RETENTION_DAYS: i64 = 3;
 
 /// How many times the whole job is attempted by the cron handler.
 pub const MAX_ATTEMPTS: u32 = 3;
+
+/// Storage key for the snapshot taken at `now_ms`.
+///
+/// One dump per day, so the date alone names it: re-running a manual backup on
+/// the same day overwrites that day's snapshot instead of accumulating copies.
+pub fn snapshot_key_for(now_ms: i64) -> String {
+    let date = crate::s3sign::aws_timestamps(now_ms).0;
+    format!("back/{}-{}-{}.sql", &date[0..4], &date[4..6], &date[6..8])
+}
+
+/// Snapshot timestamps at or before this instant are past the retention window.
+pub fn retention_cutoff_ms(now_ms: i64) -> i64 {
+    now_ms - RETENTION_DAYS * 86_400_000
+}
 
 /// Summary of a completed backup, logged and surfaced to the admin.
 #[derive(Debug)]
@@ -57,13 +74,13 @@ pub async fn run_backup(env: &Env, cfg: &Config) -> ApiResult<BackupReport> {
         metadata,
     };
 
-    let history_key = format!("back/history/{}-{}.sql", now_ms(), random_token(12));
-    db.stage_object(&history_key).await?;
-    r2.put(&history_key, &sql, opts.clone()).await?;
-    db.record_backup(&history_key, &sha256, size).await?;
-    // Only replace latest once a checksum-verified historical copy exists.
+    let snapshot_key = snapshot_key_for(now_ms());
+    db.stage_object(&snapshot_key).await?;
+    r2.put(&snapshot_key, &sql, opts.clone()).await?;
+    db.record_backup(&snapshot_key, &sha256, size).await?;
+    // Only replace latest once a checksum-verified dated copy exists.
     r2.put(LATEST_KEY, &sql, opts).await?;
-    db.prune_backups().await?;
+    db.prune_backups(retention_cutoff_ms(now_ms())).await?;
     crate::cleanup::run(&db, &r2).await?;
 
     // Rate-limit counters are only meaningful for a 15-minute window; sweeping
@@ -145,4 +162,23 @@ pub async fn download_latest(r2: &R2) -> ApiResult<Vec<u8>> {
         .bytes()
         .await
         .map_err(|e| ApiError::Internal(format!("reading backup failed: {e}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{RETENTION_DAYS, retention_cutoff_ms, snapshot_key_for};
+
+    #[test]
+    fn snapshot_key_is_a_dated_path_under_back() {
+        // 2025-01-01T00:00:00Z
+        assert_eq!(snapshot_key_for(1_735_689_600_000), "back/2025-01-01.sql");
+        // A later instant on the same day maps to the same key, so a rerun overwrites.
+        assert_eq!(snapshot_key_for(1_735_689_600_000 + 3_600_000), "back/2025-01-01.sql");
+    }
+
+    #[test]
+    fn cutoff_is_exactly_the_retention_window() {
+        let now = 1_735_689_600_000;
+        assert_eq!(retention_cutoff_ms(now), now - RETENTION_DAYS * 86_400_000);
+    }
 }

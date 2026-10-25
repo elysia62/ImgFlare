@@ -143,16 +143,21 @@ impl Db {
 
     pub async fn stage_object(&self, key: &str) -> ApiResult<()> {
         let now = crate::utils::now_ms();
-        self.prepare("INSERT INTO cleanup_jobs(r2_key,not_before,created_at) VALUES (?,?,?)")
-            .bind(&[
-                JsValue::from_str(key),
-                JsValue::from_f64(
-                    (now + crate::config::STAGED_OBJECT_GRACE_MS) as f64,
-                ),
-                JsValue::from_f64(now as f64),
-            ])?
-            .run()
-            .await?;
+        // A key may already be queued: a same-day backup overwrites its snapshot,
+        // and an upload can retry after a transient failure. Re-declaring intent
+        // is harmless, so the insert must not collide on the primary key.
+        self.prepare(
+            "INSERT OR IGNORE INTO cleanup_jobs(r2_key,not_before,created_at) VALUES (?,?,?)",
+        )
+        .bind(&[
+            JsValue::from_str(key),
+            JsValue::from_f64(
+                (now + crate::config::STAGED_OBJECT_GRACE_MS) as f64,
+            ),
+            JsValue::from_f64(now as f64),
+        ])?
+        .run()
+        .await?;
         Ok(())
     }
 
@@ -240,9 +245,16 @@ impl Db {
         Ok((results[1].results()?, total))
     }
 
+    /// Record a completed snapshot.
+    ///
+    /// A key can repeat: one snapshot per day, so a manual rerun overwrites that
+    /// day's entry rather than failing on the primary key.
     pub async fn record_backup(&self, key: &str, sha256: &str, size: u64) -> ApiResult<()> {
         let add = self
-            .prepare("INSERT INTO backup_snapshots(r2_key,created_at,sha256,size) VALUES (?,?,?,?)")
+            .prepare(
+                "INSERT INTO backup_snapshots(r2_key,created_at,sha256,size) VALUES (?,?,?,?) \
+                 ON CONFLICT(r2_key) DO UPDATE SET created_at=excluded.created_at, sha256=excluded.sha256, size=excluded.size",
+            )
             .bind(&[
                 JsValue::from_str(key),
                 JsValue::from_f64(crate::utils::now_ms() as f64),
@@ -256,12 +268,16 @@ impl Db {
         Ok(())
     }
 
-    pub async fn prune_backups(&self) -> ApiResult<()> {
-        // Newest 30 snapshots survive. Queue old keys before removing metadata.
+    /// Drop snapshots older than `cutoff_ms`, queueing their objects for deletion.
+    ///
+    /// `back/latest.sql` is not a row in this table, so the alias is never queued.
+    pub async fn prune_backups(&self, cutoff_ms: i64) -> ApiResult<()> {
         let now = JsValue::from_f64(crate::utils::now_ms() as f64);
-        let jobs = self.prepare("INSERT OR IGNORE INTO cleanup_jobs(r2_key,not_before,created_at) SELECT r2_key,?,? FROM backup_snapshots ORDER BY created_at DESC,r2_key DESC LIMIT -1 OFFSET 30")
-            .bind(&[now.clone(),now])?;
-        let remove = self.prepare("DELETE FROM backup_snapshots WHERE r2_key IN (SELECT r2_key FROM backup_snapshots ORDER BY created_at DESC,r2_key DESC LIMIT -1 OFFSET 30)");
+        let cutoff = JsValue::from_f64(cutoff_ms as f64);
+        let jobs = self.prepare("INSERT OR IGNORE INTO cleanup_jobs(r2_key,not_before,created_at) SELECT r2_key,?,? FROM backup_snapshots WHERE created_at<=?")
+            .bind(&[now.clone(), now, cutoff.clone()])?;
+        let remove = self.prepare("DELETE FROM backup_snapshots WHERE created_at<=?")
+            .bind(&[cutoff])?;
         self.inner.batch(vec![jobs, remove]).await?;
         Ok(())
     }

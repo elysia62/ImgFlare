@@ -364,16 +364,45 @@ try {
   await db.prepare('INSERT INTO cleanup_jobs(r2_key,not_before,created_at) VALUES (?,0,0)').bind(new URL(file.url).pathname.slice(1)).run();
   await worker.scheduled({cron:'*/15 * * * *'});
   assert.ok(objects.has('/imgflare-test'+imagePath),'cleanup protects already committed objects');
-  // Retention queues old snapshots for cleanup and keeps the newest 30.
-  for (let n=0;n<31;n++) {
-    const key=`back/history/old-${n}.sql`;
-    objects.set('/imgflare-test/'+key,{bytes:Buffer.from('old'),headers:{'content-type':'application/sql'}});
-    await db.prepare('INSERT INTO backup_snapshots(r2_key,created_at,sha256,size) VALUES (?,?,?,?)').bind(key,n,'old',3).run();
+  // Retention keeps the last three days and queues the rest for cleanup.
+  // Timestamps are relative to now, because pruning is by age, not by count.
+  const day = 86_400_000;
+  const nowMs = Date.now();
+  const dateOf = (ms) => new Date(ms).toISOString().slice(0, 10);
+  // Four days old and beyond: past the window, so these must disappear.
+  const expiredKeys = [];
+  for (let n = 4; n <= 6; n++) {
+    const key = `back/${dateOf(nowMs - n * day)}.sql`;
+    expiredKeys.push(key);
+    objects.set('/imgflare-test/' + key, { bytes: Buffer.from('old'), headers: { 'content-type': 'application/sql' } });
+    await db.prepare('INSERT INTO backup_snapshots(r2_key,created_at,sha256,size) VALUES (?,?,?,?)')
+      .bind(key, nowMs - n * day, 'old', 3).run();
   }
-  assert.equal((await call('/api/backup/run',{method:'POST',headers:adminHeaders})).status,200);
-  assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM backup_snapshots').first()).n,30);
-  assert.ok(!objects.has('/imgflare-test/back/history/old-0.sql'));
-  assert.equal((await call('/back/history/old-30.sql')).status,404);
+  // One and two days old: inside the window, so these must survive.
+  const keptKeys = [1, 2].map((n) => `back/${dateOf(nowMs - n * day)}.sql`);
+  for (const [index, key] of keptKeys.entries()) {
+    objects.set('/imgflare-test/' + key, { bytes: Buffer.from('recent'), headers: { 'content-type': 'application/sql' } });
+    await db.prepare('INSERT INTO backup_snapshots(r2_key,created_at,sha256,size) VALUES (?,?,?,?)')
+      .bind(key, nowMs - (index + 1) * day, 'recent', 6).run();
+  }
+  assert.equal((await call('/api/backup/run', { method: 'POST', headers: adminHeaders })).status, 200);
+  const survived = (await db.prepare('SELECT r2_key FROM backup_snapshots').all()).results.map(r => r.r2_key);
+  for (const key of expiredKeys) {
+    assert.ok(!survived.includes(key), `expired snapshot ${key} is removed from the index`);
+    assert.ok(!objects.has('/imgflare-test/' + key), `expired object ${key} is deleted from R2`);
+  }
+  for (const key of keptKeys) {
+    assert.ok(survived.includes(key), `snapshot ${key} is inside the window and kept`);
+  }
+  assert.ok(objects.has('/imgflare-test/back/latest.sql'), 'the latest alias is never pruned');
+  assert.equal((await call('/' + expiredKeys[0])).status, 404);
+  // Filenames carry the date, so a same-day rerun overwrites instead of piling up.
+  assert.ok(objects.has('/imgflare-test/back/' + dateOf(nowMs) + '.sql'), 'the snapshot key is derived from the current date');
+  assert.equal(
+    (await db.prepare('SELECT COUNT(*) AS n FROM backup_snapshots WHERE r2_key=?').bind('back/' + dateOf(nowMs) + '.sql').first()).n,
+    1, 'one snapshot per day, even after a second run',
+  );
+  assert.ok(![...objects.keys()].some(key => key.includes('/back/history/')), 'no history directory is written');
 
   // Failed D1 deletion leaves both index and object. Failed R2 deletion is deferred.
   await db.prepare("CREATE TRIGGER fail_delete BEFORE DELETE ON files BEGIN SELECT RAISE(ABORT, 'injected failure'); END").run();
