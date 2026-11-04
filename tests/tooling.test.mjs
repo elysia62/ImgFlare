@@ -6,6 +6,49 @@ import { spawn } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, writeFile, copyFile, chmod, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { deploy } from '../scripts/deploy.mjs';
+
+test('deployment needs no application credentials, migrates first and preserves runtime variables', () => {
+  for (const mode of ['fresh', 'existing', 'id']) {
+    const calls = [];
+    deploy({
+      database: { binding: 'DB', database_name: 'custom-db', ...(mode === 'id' ? { database_id: 'restored-id' } : {}) },
+      env: { CLOUDFLARE_API_TOKEN: 'test-deploy-token' },
+      execute(command, args, env, capture) {
+        assert.equal(command, 'bun');
+        assert.deepEqual(env, { CLOUDFLARE_API_TOKEN: 'test-deploy-token' });
+        const action = args[2] === 'd1' ? args[3] : args[2];
+        calls.push(action);
+        if (action === 'list') {
+          assert.equal(capture, true);
+          return JSON.stringify(mode === 'fresh' ? [] : [{ name: 'custom-db' }]);
+        }
+        if (action === 'create') assert.deepEqual(args.slice(4), ['custom-db', '--no-update-config']);
+        if (action === 'migrations') assert.deepEqual(args.slice(4), ['apply', 'DB', '--remote']);
+        if (action === 'deploy') {
+          assert.deepEqual(args, ['x', 'wrangler', 'deploy', '--keep-vars']);
+        }
+      },
+    });
+    assert.deepEqual(calls, mode === 'fresh' ? ['list', 'create', 'migrations', 'deploy'] : mode === 'existing' ? ['list', 'migrations', 'deploy'] : ['migrations', 'deploy']);
+  }
+});
+
+test('database discovery, creation and migration errors prevent publishing', () => {
+  for (const failAt of ['list', 'create', 'migrations', 'invalid-list']) {
+    const calls = [];
+    assert.throws(() => deploy({
+      database: { binding: 'DB', database_name: 'custom-db' }, env: {},
+      execute(_command, args) {
+        const action = args[2] === 'd1' ? args[3] : args[2];
+        calls.push(action);
+        if (action === failAt) throw new Error('injected failure');
+        if (action === 'list') return failAt === 'invalid-list' ? '{}' : '[]';
+      },
+    }), failAt === 'invalid-list' ? /列表响应无效/ : /injected failure/);
+    assert.ok(!calls.includes('deploy'));
+  }
+});
 
 test('multipart limits count the actual stream even without Content-Length', async () => {
   const request = new Request('https://test/api/files/id/thumbnail', {

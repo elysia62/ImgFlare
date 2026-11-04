@@ -22,6 +22,7 @@ getrandom = { version = "0.4", features = ["wasm_js"] }
 
 [profile.release]
 lto = true
-strip = true
+# Preserve target_features for wasm-bindgen's Wasm feature detection.
+strip = "debuginfo"
 codegen-units = 1
 opt-level = "s"

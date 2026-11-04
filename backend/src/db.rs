@@ -39,6 +39,9 @@ pub struct Db {
     inner: D1Database,
 }
 
+/// Refreshed before each backup storage operation (which times out after 60s).
+const BACKUP_LEASE_MS: i64 = 15 * 60 * 1000;
+
 impl Db {
     pub fn from_env(env: &Env) -> ApiResult<Self> {
         let inner = env
@@ -87,6 +90,56 @@ impl Db {
     /// Build a statement. The SQL string here is always a constant.
     fn prepare(&self, sql: &str) -> D1PreparedStatement {
         self.inner.prepare(sql)
+    }
+
+    /// A single conditional write serializes backups and backup-object cleanup.
+    /// The lease also recovers automatically if a Worker is terminated.
+    pub async fn acquire_backup_lock(&self) -> ApiResult<Option<String>> {
+        let owner = crate::utils::random_token(32);
+        let now = crate::utils::now_ms();
+        let acquired = self
+            .prepare(
+                "INSERT INTO maintenance_locks(name,owner,expires_at) VALUES ('backup',?1,?2) \
+             ON CONFLICT(name) DO UPDATE SET owner=excluded.owner, expires_at=excluded.expires_at \
+             WHERE maintenance_locks.expires_at<=?3 RETURNING owner",
+            )
+            .bind(&[
+                JsValue::from_str(&owner),
+                JsValue::from_f64((now + BACKUP_LEASE_MS) as f64),
+                JsValue::from_f64(now as f64),
+            ])?
+            .first::<String>(Some("owner"))
+            .await?;
+        Ok(acquired)
+    }
+
+    /// A stale job must stop instead of renewing a lease owned by another job.
+    pub async fn renew_backup_lock(&self, owner: &str) -> ApiResult<()> {
+        let now = crate::utils::now_ms();
+        let renewed = self
+            .prepare(
+                "UPDATE maintenance_locks SET expires_at=?1 \
+             WHERE name='backup' AND owner=?2 AND expires_at>?3 RETURNING owner",
+            )
+            .bind(&[
+                JsValue::from_f64((now + BACKUP_LEASE_MS) as f64),
+                JsValue::from_str(owner),
+                JsValue::from_f64(now as f64),
+            ])?
+            .first::<String>(Some("owner"))
+            .await?;
+        if renewed.is_none() {
+            return Err(ApiError::TooManyRequests("backup_lock_lost"));
+        }
+        Ok(())
+    }
+
+    pub async fn release_backup_lock(&self, owner: &str) -> ApiResult<()> {
+        self.prepare("DELETE FROM maintenance_locks WHERE name='backup' AND owner=?")
+            .bind(&[JsValue::from_str(owner)])?
+            .run()
+            .await?;
+        Ok(())
     }
 
     // files
@@ -143,11 +196,10 @@ impl Db {
 
     pub async fn stage_object(&self, key: &str) -> ApiResult<()> {
         let now = crate::utils::now_ms();
-        // A key may already be queued: a same-day backup overwrites its snapshot,
-        // and an upload can retry after a transient failure. Re-declaring intent
-        // is harmless, so the insert must not collide on the primary key.
+        // Reusing a dated backup key must renew its cleanup grace period.
         self.prepare(
-            "INSERT OR IGNORE INTO cleanup_jobs(r2_key,not_before,created_at) VALUES (?,?,?)",
+            "INSERT INTO cleanup_jobs(r2_key,not_before,created_at) VALUES (?,?,?) \
+             ON CONFLICT(r2_key) DO UPDATE SET not_before=excluded.not_before, created_at=excluded.created_at",
         )
         .bind(&[
             JsValue::from_str(key),
@@ -206,6 +258,19 @@ impl Db {
             .all()
             .await?
             .results()?)
+    }
+
+    /// Recheck after acquiring the backup lock: the original selection can age.
+    pub async fn cleanup_is_due(&self, key: &str) -> ApiResult<bool> {
+        let row = self
+            .prepare("SELECT COUNT(*) AS n FROM cleanup_jobs WHERE r2_key=? AND not_before<=?")
+            .bind(&[
+                JsValue::from_str(key),
+                JsValue::from_f64(crate::utils::now_ms() as f64),
+            ])?
+            .first::<CountRow>(None)
+            .await?;
+        Ok(row.is_some_and(|r| r.n > 0))
     }
 
     pub async fn attach_thumbnail(&self, id: &str, key: &str) -> ApiResult<()> {
@@ -276,7 +341,8 @@ impl Db {
         let cutoff = JsValue::from_f64(cutoff_ms as f64);
         let jobs = self.prepare("INSERT OR IGNORE INTO cleanup_jobs(r2_key,not_before,created_at) SELECT r2_key,?,? FROM backup_snapshots WHERE created_at<=?")
             .bind(&[now.clone(), now, cutoff.clone()])?;
-        let remove = self.prepare("DELETE FROM backup_snapshots WHERE created_at<=?")
+        let remove = self
+            .prepare("DELETE FROM backup_snapshots WHERE created_at<=?")
             .bind(&[cutoff])?;
         self.inner.batch(vec![jobs, remove]).await?;
         Ok(())

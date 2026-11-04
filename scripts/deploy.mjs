@@ -1,100 +1,51 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 
-export const CONFIG_NAMES = [
-  "ADMIN_USERNAME",
-  "ADMIN_PASSWORD",
-  "SESSION_SECRET",
-  "TURNSTILE_SITE_KEY",
-  "TURNSTILE_SECRET",
-  "R2_ACCOUNT_ID",
-  "R2_ACCESS_KEY_ID",
-  "R2_SECRET_ACCESS_KEY",
-  "R2_BUCKET",
-];
-
-export function parseDotenv(text) {
-  const out = {};
-  for (const line of text.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq <= 0) continue;
-    const key = trimmed.slice(0, eq).trim();
-    let value = trimmed.slice(eq + 1).trim();
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
-    }
-    out[key] = value;
-  }
-  return out;
-}
-
-export function loadConfig(env, dotenvText) {
-  const file = parseDotenv(dotenvText);
-  const values = {};
-  const missing = [];
-  for (const name of CONFIG_NAMES) {
-    const value = (env[name] ?? file[name] ?? "").trim();
-    if (!value) missing.push(name);
-    else if (name === "SESSION_SECRET" && (value.length < 32 || value.startsWith("YOUR_") || value.startsWith("imgflare-session-"))) {
-      missing.push(name + "（请生成新的随机密钥，至少 32 字符）");
-    } else values[name] = value;
-  }
-  return { values, missing };
-}
-
-function readDevVars() {
-  try {
-    return readFileSync(".dev.vars", "utf8");
-  } catch {
-    return "";
-  }
-}
-
-function run(command, args, env) {
-  const result = spawnSync(command, args, { stdio: "inherit", env });
+function run(command, args, env, capture = false) {
+  const result = spawnSync(command, args, {
+    stdio: capture ? ["ignore", "pipe", "inherit"] : "inherit",
+    encoding: "utf8",
+    env,
+  });
   if (result.error) throw result.error;
   if (result.status !== 0) {
     throw new Error(`${command} exited with status ${result.status ?? 1}`);
   }
+  return result.stdout;
 }
 
-function main() {
-  const { values, missing } = loadConfig(process.env, readDevVars());
-  if (missing.length > 0) {
-    console.error(`缺少或无效配置：${missing.join(", ")}。请填写 Build variables and secrets。`);
-    process.exit(1);
+export function deploy({ database, env = process.env, execute = run }) {
+  if (!database || database.binding !== "DB" || (!database.database_id && !database.database_name)) {
+    throw new Error("请在 wrangler.toml 中配置 DB 的 database_name 或 database_id。");
   }
+  // Provision fresh installations before migration, without publishing code.
+  // A configured ID is authoritative (including a restored/custom database).
+  if (!database.database_id) {
+    const databases = JSON.parse(execute("bun", ["x", "wrangler", "d1", "list", "--json"], env, true));
+    if (!Array.isArray(databases) || databases.some(db => typeof db.name !== "string")) {
+      throw new Error("D1 数据库列表响应无效，已停止部署。");
+    }
+    if (!databases.some(db => db.name === database.database_name)) {
+      execute("bun", ["x", "wrangler", "d1", "create", database.database_name, "--no-update-config"], env);
+    }
+  }
+  execute(
+    "bun",
+    ["x", "wrangler", "d1", "migrations", "apply", "DB", "--remote"],
+    env,
+  );
+  // Runtime configuration is managed in the dashboard. Wrangler preserves
+  // existing secrets; keep-vars also retains dashboard plaintext variables.
+  execute("bun", ["x", "wrangler", "deploy", "--keep-vars"], env);
+}
 
-  const dir = mkdtempSync(join(tmpdir(), "imgflare-"));
-  const file = join(dir, "secrets.json");
-  try {
-    writeFileSync(file, JSON.stringify(values), { mode: 0o600 });
-    const childEnv = { ...process.env };
-    for (const name of CONFIG_NAMES) delete childEnv[name];
-    run(
-      "bun",
-      ["x", "wrangler", "deploy", "--keep-vars", "--secrets-file", file],
-      childEnv,
-    );
-    run(
-      "bun",
-      ["x", "wrangler", "d1", "migrations", "apply", "DB", "--remote"],
-      childEnv,
-    );
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
+async function main() {
+  const { unstable_readConfig } = await import("wrangler");
+  const config = unstable_readConfig({ config: "wrangler.toml" });
+  deploy({ database: config.d1_databases.find(db => db.binding === "DB") });
 }
 
 if (import.meta.main) {
-  try { main(); }
+  try { await main(); }
   catch (error) {
     console.error(error.message);
     process.exitCode = 1;

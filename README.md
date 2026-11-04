@@ -14,15 +14,17 @@
 1. 创建一个私有 R2 桶，以及该桶的读写访问密钥。
 2. 创建 Turnstile Managed widget，允许访问图床的域名。
 3. 在 Cloudflare Workers 中连接本仓库，根目录选择 `/`。
-4. 填写构建配置及下表中的变量，然后部署。D1 名称使用 `imgflare-db`。
+4. 填写下表的构建配置和版本变量，然后部署。D1 名称使用 `imgflare-db`。
+5. 部署完成后，在 Worker 的 **Settings → Variables and Secrets** 中添加运行时配置，保存并部署使其生效，再打开 `/login`。
 
 | 构建配置 | 值 |
 |---|---|
 | Build command | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh -s -- -y --profile minimal --default-toolchain stable && . "$HOME/.cargo/env" && bun run build` |
 | Deploy command | `bun run deploy` |
-| Build variable | `BUN_VERSION=1.4.3` |
+| Build variable | `BUN_VERSION=1.4.4` |
+| Build variable | `NODE_VERSION=26.13.0` |
 
-在 **Settings → Build → Build variables and secrets** 中填写：
+构建侧只需上述 Node/Bun 版本设置。以下九项填写在 Worker 的 **Settings → Variables and Secrets**（运行时配置）中：
 
 | 名称 | 内容 | 类型 |
 |---|---|---|
@@ -36,9 +38,15 @@
 | `R2_SECRET_ACCESS_KEY` | R2 Secret Access Key | 密钥 |
 | `R2_BUCKET` | R2 桶名 | 变量 |
 
-部署脚本将这九项配置写入 Worker，并执行 D1 迁移。R2 使用 S3 API，不需要绑定。[init_01.sql](backend/migrations/init_01.sql) 是完整初始化基线；[schema.sql](backend/schema.sql) 是备份恢复用的同一份结构，两者必须保持一致，集成测试会校验。
+部署脚本先确认 D1 数据库存在（首次部署按配置的名称创建），执行迁移成功后，再发布 Worker。迁移失败会停止发布。账号、Turnstile 和 R2 配置在运行时读取；部署脚本不读取或上传 `.dev.vars`，重新部署会保留控制台里的运行时变量和密钥。首次部署后，需补齐这九项配置才能正常登录和使用。[Cloudflare 配置说明](https://developers.cloudflare.com/workers/ci-cd/builds/configuration/#build-variables-and-secrets)
+
+已有部署只需保留运行时的这九项配置，可删除 **Settings → Build → Build variables and secrets** 中同名的九项。请先确保仓库已更新为当前部署脚本，再触发部署。保留 `NODE_VERSION`、`BUN_VERSION` 以及部署认证所需的 `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID`（如果手动配置过）。
+
+R2 使用 S3 API，不需要绑定。[init_01.sql](backend/migrations/init_01.sql) 是初始化基线，后续变更放在新的迁移文件中；[schema.sql](backend/schema.sql) 是应用全部迁移后的恢复结构，集成测试会校验两者一致。
 
 `init_02.sql` 已经并入 `init_01.sql` 后删除。已部署的数据库记录着执行过的迁移名，重放同一文件名会被跳过，所以结构变更从 `init_03.sql` 起继续编号，不复用已执行过的文件名。
+
+已有部署升级：在 Cloudflare 的 Build variables 中将 `NODE_VERSION` 改为 `26.13.0`、`BUN_VERSION` 改为 `1.4.4`，保持 Deploy command 为 `bun run deploy`，重新部署即可。脚本会自动执行 `init_03.sql`，新增缩略图索引和备份任务锁，不需要重建数据库或重跑初始化。直接使用 `wrangler deploy` 时，需先运行 `bun run db:migrate:remote`。
 
 `SESSION_SECRET` 生成一次后保持不变；修改它会使已有登录失效。会话有效期为 7 天。
 
@@ -46,7 +54,7 @@
 
 ## 本地开发
 
-需要 Bun 1.4.3、Node.js 22+ 和 Rust（含 `wasm32-unknown-unknown`）。构建脚本会下载与 Cargo.lock 一致的 wasm-bindgen。
+需要 Bun 1.4.4、Node.js 26 LTS（26.13.0 起）和 Rust（含 `wasm32-unknown-unknown`）。`.node-version` 与 CI 统一 Node 版本；构建脚本会下载与 Cargo.lock 一致的 wasm-bindgen。
 
 ```sh
 bun install --frozen-lockfile
@@ -62,11 +70,11 @@ bun run dev
 | `bun run build:worker` | 构建 Rust/Wasm Worker |
 | `bun run verify` | 类型、契约、前端、工具、Rust、构建及集成检查 |
 | `bun run test:frontend` | 搜索竞态、上传队列、进度 DOM 和响应校验 |
-| `bun run test:tooling` | 请求体限额和开发监听调度 |
+| `bun run test:tooling` | 请求体限额、开发监听调度和部署顺序 |
 | `cargo test --locked` | 图片格式和 S3 签名单元测试 |
 | `bun run test:integration` | 构建并验证登录、上传、权限、备份恢复及 Cron |
 | `bun run dev:cron` | 启动本地服务并允许触发定时任务 |
-| `bun run deploy` | 部署并执行远程数据库迁移 |
+| `bun run deploy` | 先执行远程数据库迁移，再部署 Worker |
 | `bun run clean` | 清理构建产物与 Rust 编译缓存 |
 
 `bun run dev` 会监听 Rust、SQL、TypeScript、HTML、CSS 和共享模块，合并连续修改并依次重建；新增迁移自动应用到本地 D1。GitHub Actions 在 push 和 pull request 时运行 `bun run verify`。
@@ -126,6 +134,8 @@ const API_TOKEN = 'cph_后台生成的Token';
 每日 04:00 UTC 将五张业务表（`files`、`api_tokens`、`kv_meta`、`cleanup_jobs`、`backup_snapshots`）导出为 SQL。快照直接写在 `back/` 下，按日期命名（如 `back/2026-10-19.sql`），随后更新 `back/latest.sql`。备份保留 3 天，更早的文件由清理任务删除；同一天重复备份覆盖当天文件，不会堆积。后台可手动备份和下载最新文件，剩余几个快照可通过 R2 的私有访问密钥下载。
 
 备份包含业务表结构、索引及数据，不含图片文件和 Worker 密钥。R2 校验 SHA-256 后原子替换备份；导出或写入被拒绝时保留原文件，总共最多尝试 3 次。
+
+手动和定时备份通过 D1 任务锁互斥，正在备份时再次手动触发会返回 429；清理任务会跳过备份正在使用的对象。任务锁在存储操作前续期，Worker 异常终止后最多 15 分钟自动过期。锁的运行状态不写入备份，恢复数据库后可以立即备份。
 
 自动备份上限为五张表合计 20,000 行、SQL 数据语句 8 MiB。超过时使用：
 

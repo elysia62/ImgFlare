@@ -2,7 +2,7 @@
 //!
 //! Defaults that are the same for every install are in code.
 //! Account values — Turnstile, admin login, session signing and R2 keys — are typed
-//! on Cloudflare's create-project page and are not in git.
+//! in the Worker's runtime Variables and Secrets settings and are not in git.
 
 use crate::error::{ApiError, ApiResult};
 use worker::Env;

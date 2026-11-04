@@ -3,6 +3,8 @@ main = "dist/worker/shim.mjs"
 compatibility_date = "2026-09-27"
 
 compatibility_flags = ["nodejs_compat"]
+# Runtime variables are managed in the dashboard and survive redeployments.
+keep_vars = true
 
 [observability]
 # Off by default: this is a single-admin personal host and dashboard log
@@ -26,15 +28,5 @@ binding = "DB"
 database_name = "imgflare-db"
 migrations_dir = "backend/migrations"
 
-[secrets]
-required = [
-  "ADMIN_USERNAME",
-  "ADMIN_PASSWORD",
-  "SESSION_SECRET",
-  "TURNSTILE_SITE_KEY",
-  "TURNSTILE_SECRET",
-  "R2_ACCOUNT_ID",
-  "R2_ACCESS_KEY_ID",
-  "R2_SECRET_ACCESS_KEY",
-  "R2_BUCKET",
-]
+# Account settings are added in Worker Settings > Variables and Secrets after
+# the first deployment. Do not require secrets before the Worker is created.

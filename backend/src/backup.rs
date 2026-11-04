@@ -44,9 +44,9 @@ pub struct BackupReport {
 ///
 /// Returns `Ok(report)` only when a verified SQL dump is sitting at
 /// `back/latest.sql` in the image bucket.
-pub async fn run_backup(env: &Env, cfg: &Config) -> ApiResult<BackupReport> {
+async fn run_backup(db: &Db, cfg: &Config, owner: &str) -> ApiResult<BackupReport> {
     // --- 1. Produce the dump ----------------------------------------------
-    let db = Db::from_env(env)?;
+    db.renew_backup_lock(owner).await?;
     let sql = db
         .export_sql()
         .await
@@ -75,18 +75,15 @@ pub async fn run_backup(env: &Env, cfg: &Config) -> ApiResult<BackupReport> {
     };
 
     let snapshot_key = snapshot_key_for(now_ms());
+    db.renew_backup_lock(owner).await?;
     db.stage_object(&snapshot_key).await?;
     r2.put(&snapshot_key, &sql, opts.clone()).await?;
+    db.renew_backup_lock(owner).await?;
     db.record_backup(&snapshot_key, &sha256, size).await?;
     // Only replace latest once a checksum-verified dated copy exists.
     r2.put(LATEST_KEY, &sql, opts).await?;
+    db.renew_backup_lock(owner).await?;
     db.prune_backups(retention_cutoff_ms(now_ms())).await?;
-    crate::cleanup::run(&db, &r2).await?;
-
-    // Rate-limit counters are only meaningful for a 15-minute window; sweeping
-    // them once a day keeps `kv_meta` from accumulating dead keys. Best effort:
-    // a failure here must not fail the backup.
-    let _ = db.prune_login_failures().await;
 
     let finished_at = now_ms();
 
@@ -99,14 +96,30 @@ pub async fn run_backup(env: &Env, cfg: &Config) -> ApiResult<BackupReport> {
 
 /// Run the backup with up to [`MAX_ATTEMPTS`] attempts.
 ///
-/// A failed attempt is retried after a short pause. If every attempt fails, the
-/// previous `back/latest.sql` is still intact — nothing is ever deleted on failure.
+/// A failed attempt is retried after a short pause. The previous latest dump is
+/// only replaced after R2 has accepted a complete, checksum-verified upload.
 pub async fn run_backup_with_retries(env: &Env, cfg: &Config) -> ApiResult<BackupReport> {
-    let mut last_err: Option<ApiError> = None;
+    let db = Db::from_env(env)?;
+    let owner = db
+        .acquire_backup_lock()
+        .await?
+        .ok_or(ApiError::TooManyRequests("backup_busy"))?;
+    let result = retry_backup(&db, cfg, &owner).await;
+    // Release on success and failure, without ever releasing a successor's lease.
+    let released = db.release_backup_lock(&owner).await;
+    let report = result?;
+    released?;
+    crate::cleanup::run(&db, &R2::new(&cfg.r2)).await?;
+    let _ = db.prune_login_failures().await;
+    Ok(report)
+}
 
+async fn retry_backup(db: &Db, cfg: &Config, owner: &str) -> ApiResult<BackupReport> {
+    let mut last_err: Option<ApiError> = None;
     for attempt in 1..=MAX_ATTEMPTS {
-        match run_backup(env, cfg).await {
+        match run_backup(db, cfg, owner).await {
             Ok(report) => return Ok(report),
+            Err(err @ ApiError::TooManyRequests(_)) => return Err(err),
             Err(err) => {
                 last_err = Some(err);
                 if attempt < MAX_ATTEMPTS {
@@ -173,7 +186,10 @@ mod tests {
         // 2025-01-01T00:00:00Z
         assert_eq!(snapshot_key_for(1_735_689_600_000), "back/2025-01-01.sql");
         // A later instant on the same day maps to the same key, so a rerun overwrites.
-        assert_eq!(snapshot_key_for(1_735_689_600_000 + 3_600_000), "back/2025-01-01.sql");
+        assert_eq!(
+            snapshot_key_for(1_735_689_600_000 + 3_600_000),
+            "back/2025-01-01.sql"
+        );
     }
 
     #[test]

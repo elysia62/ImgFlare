@@ -1,4 +1,6 @@
-# Copy to .dev.vars and fill in your values.
+# Local development only: copy to .dev.vars and fill in your values.
+# Production values belong in Worker Settings > Variables and Secrets.
+# The deployment script does not upload this file.
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=YOUR_ADMIN_PASSWORD
 # Generate once: openssl rand -hex 32

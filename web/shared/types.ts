@@ -128,6 +128,8 @@ export function humanizeError(code: string): string {
     file_not_found: '文件不存在',
     token_not_found: 'Token 不存在',
     no_backup_available: '还没有可用的备份',
+    backup_busy: '备份任务正在运行，请稍后重试',
+    backup_lock_lost: '备份任务已超时，请重新备份',
     name_required: '请填写 Token 名称',
     name_too_long: 'Token 名称过长',
     invalid_cursor: '分页参数无效，请刷新列表',

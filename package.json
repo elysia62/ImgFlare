@@ -6,10 +6,10 @@
   "license": "MIT",
   "type": "module",
   "engines": {
-    "bun": ">=1.4.0",
-    "node": ">=22"
+    "bun": ">=1.4.4",
+    "node": ">=26.13.0"
   },
-  "packageManager": "bun@1.4.3",
+  "packageManager": "bun@1.4.4",
   "scripts": {
     "typecheck": "tsc --noEmit",
     "check:contract": "bun run tests/contract.mjs",
@@ -33,6 +33,6 @@
   "devDependencies": {
     "esbuild": "0.28.2",
     "typescript": "7.0.2",
-    "wrangler": "4.152.0"
+    "wrangler": "4.157.0"
   }
 }

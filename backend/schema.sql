@@ -45,10 +45,20 @@ CREATE TABLE IF NOT EXISTS backup_snapshots (
 );
 CREATE INDEX IF NOT EXISTS idx_backup_created ON backup_snapshots(created_at DESC, r2_key DESC);
 
--- Restored databases already have the complete initialization baseline.
+CREATE INDEX IF NOT EXISTS idx_files_thumbnail ON files(thumbnail_r2_key);
+
+-- Lock state is transient and is intentionally not included in exported data.
+CREATE TABLE IF NOT EXISTS maintenance_locks (
+    name TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    expires_at INTEGER NOT NULL
+);
+
+-- Restored databases already include these migrations.
 CREATE TABLE IF NOT EXISTS d1_migrations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT UNIQUE,
     applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 INSERT OR IGNORE INTO d1_migrations(name) VALUES ('init_01.sql');
+INSERT OR IGNORE INTO d1_migrations(name) VALUES ('init_03.sql');

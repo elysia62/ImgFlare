@@ -8,7 +8,6 @@ import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runInNewContext } from 'node:vm';
-import { loadConfig } from '../scripts/deploy.mjs';
 
 // Miniflare is provided by the project's pinned Wrangler dependency.
 const requireWrangler = createRequire(import.meta.resolve('wrangler/package.json'));
@@ -21,6 +20,9 @@ let rejectBackup = false;
 let backupWrites = 0;
 let rejectDelete = false;
 let imageReads = 0;
+let beforePut = async () => {};
+let afterPut = async () => {};
+let beforeDelete = async () => {};
 const bindings = {
   ADMIN_USERNAME: 'test-admin',
   ADMIN_PASSWORD: randomBytes(24).toString('hex'),
@@ -56,12 +58,15 @@ const outbound = async (request) => {
       const digest = createHash('sha256').update(bytes);
       assert.equal(request.headers.get('x-amz-checksum-sha256'), digest.digest('base64'));
       assert.equal(request.headers.get('x-amz-content-sha256'), createHash('sha256').update(bytes).digest('hex'));
+      await beforePut(key);
       objects.set(key, { bytes, headers: Object.fromEntries(request.headers) });
+      await afterPut(key);
       if (key.endsWith('/back/latest.sql')) backupWrites++;
       return new Response(null, { headers: { etag: '"test-etag"' } });
     }
     if (request.method === 'DELETE') {
       if (rejectDelete) return new Response('unavailable', { status: 503 });
+      await beforeDelete(key);
       objects.delete(key);
       return new Response(null, { status: 204 });
     }
@@ -83,9 +88,9 @@ const runtimeOptions = (values) => ({
   resourcePersistencePath: state,
   telemetry: { enabled: false },
   log: new Log(LogLevel.NONE),
-  workers: [{
+  workers: ['imgflare-test', 'imgflare-peer'].map(name => ({
     config: {
-      name: 'imgflare-test',
+      name,
       compatibilityDate: '2026-09-27',
       compatibilityFlags: ['nodejs_compat'],
       manifest,
@@ -103,7 +108,7 @@ const runtimeOptions = (values) => ({
       },
     },
     dev: { outboundService: { type: 'fetcher', handler: outbound } },
-  }],
+  })),
 });
 const mf = new Miniflare(runtimeOptions(bindings));
 const call = (path, init = {}) => mf.dispatchFetch(origin + path, { redirect: 'manual', ...init });
@@ -124,13 +129,15 @@ const executeScript = async (db, sql) => {
 
 try {
   const db = await mf.getD1Database('DB');
-  const schema = await readFile(resolve(root, 'backend/migrations/init_01.sql'), 'utf8');
-  await executeScript(db, schema);
+  const migrations = (await readdir(resolve(root, 'backend/migrations'))).filter(name => name.endsWith('.sql')).sort();
+  for (const migration of migrations) {
+    await executeScript(db, await readFile(resolve(root, 'backend/migrations', migration), 'utf8'));
+  }
+  const imagePlan = (await db.prepare('EXPLAIN QUERY PLAN SELECT * FROM files WHERE r2_key=? OR thumbnail_r2_key=?').bind('i/example.png', 't/example.webp').all()).results;
+  assert.ok(imagePlan.some(row => row.detail.includes('idx_files_thumbnail')), 'thumbnail lookup uses its index');
+  assert.ok(!imagePlan.some(row => row.detail.includes('SCAN files')), 'image reads must not scan every file');
   const exportQuery = await readFile(resolve(root, 'backend/src/backup.sql'), 'utf8');
   assert.deepEqual((await db.prepare(exportQuery).bind(8388608, 20000).all()).results, []);
-  assert.deepEqual(loadConfig(bindings, '').missing, []);
-  assert.ok(loadConfig({ ...bindings, SESSION_SECRET: '' }, '').missing.includes('SESSION_SECRET'));
-  assert.ok(loadConfig({ ...bindings, SESSION_SECRET: 'short' }, '').missing.length);
 
   const landing = await call('/');
   assert.equal(landing.status, 302);
@@ -344,6 +351,9 @@ try {
   const migrated = (await db.prepare("SELECT type,name,tbl_name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf%' AND name NOT LIKE 'd1_%' ORDER BY type,name").all()).results;
   const restoredSchema = (await restored.prepare("SELECT type,name,tbl_name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf%' AND name NOT LIKE 'd1_%' ORDER BY type,name").all()).results;
   assert.deepEqual(restoredSchema,migrated,'backup schema matches migrations');
+  assert.equal((await restored.prepare('SELECT COUNT(*) AS n FROM maintenance_locks').first()).n, 0, 'running locks are not restored');
+  assert.deepEqual((await restored.prepare('PRAGMA table_info(maintenance_locks)').all()).results,
+    (await db.prepare('PRAGMA table_info(maintenance_locks)').all()).results);
   assert.deepEqual((await restored.prepare('SELECT name FROM d1_migrations ORDER BY name').all()).results.map(row=>row.name),
     (await readdir(resolve(root,'backend/migrations'))).filter(name=>name.endsWith('.sql')).sort(), 'restore marks the matching migrations as applied');
   // Test both safety caps with the exact query used by Rust.
@@ -357,6 +367,106 @@ try {
   assert.deepEqual(objects.get('/imgflare-test/back/latest.sql').bytes, beforeFailure);
   assert.ok([...objects.keys()].every((key) => !key.includes('/.tmp/')));
   rejectBackup = false;
+  assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM maintenance_locks').first()).n, 0, 'failed backup releases its lease');
+
+  // Separate Worker instances share the lease, including during R2 requests.
+  const peer = await mf.getWorker('imgflare-peer');
+  const runBackup = () => call('/api/backup/run', { method: 'POST', headers: adminHeaders });
+  // getWorker's RPC transport validates Origin against Miniflare's local hosts.
+  const peerOrigin = 'https://localhost';
+  const peerBackup = () => peer.fetch(peerOrigin + '/api/backup/run', {
+    method: 'POST', headers: { ...adminHeaders, Origin: peerOrigin },
+  });
+  const datedKey = 'back/' + new Date().toISOString().slice(0, 10) + '.sql';
+  const datedPath = '/imgflare-test/' + datedKey;
+  const runHeldBackup = async (hook, check, expectedStatus = 200) => {
+    const entered = Promise.withResolvers();
+    const release = Promise.withResolvers();
+    let held = false;
+    const intercept = async key => {
+      if (key === datedPath && !held) {
+        held = true;
+        entered.resolve();
+        await release.promise;
+      }
+    };
+    if (hook === 'before') beforePut = intercept;
+    else afterPut = intercept;
+    const pending = runBackup();
+    // A regression that fails before PUT should fail this test instead of hanging.
+    const timeout = setTimeout(() => entered.reject(new Error('backup did not reach R2')), 10000);
+    try {
+      await entered.promise;
+      await check();
+    } finally {
+      clearTimeout(timeout);
+      release.resolve();
+      beforePut = afterPut = async () => {};
+      const response = await pending;
+      assert.equal(response.status, expectedStatus, await response.clone().text());
+      if (expectedStatus === 429) assert.equal((await response.json()).error, 'backup_lock_lost');
+    }
+  };
+  await db.prepare("INSERT INTO kv_meta(key,value) VALUES ('race-marker','older')").run();
+  await runHeldBackup('before', async () => {
+    await db.prepare("UPDATE kv_meta SET value='newer' WHERE key='race-marker'").run();
+    const busy = await peerBackup();
+    assert.equal(busy.status, 429);
+    assert.equal((await busy.json()).error, 'backup_busy');
+  });
+  assert.equal((await peerBackup()).status, 200, 'a subsequent backup can publish newer data');
+  const newerValue = Buffer.from('newer').toString('hex').toUpperCase();
+  assert.ok(objects.get('/imgflare-test/back/latest.sql').bytes.toString().includes(newerValue));
+  assert.deepEqual(objects.get(datedPath).bytes, objects.get('/imgflare-test/back/latest.sql').bytes);
+  await db.prepare("DELETE FROM kv_meta WHERE key='race-marker'").run();
+
+  // A retry must renew an old cleanup job before writing the same dated key.
+  await db.prepare('DELETE FROM backup_snapshots WHERE r2_key=?').bind(datedKey).run();
+  await db.prepare('INSERT INTO cleanup_jobs(r2_key,not_before,created_at) VALUES (?,0,0)').bind(datedKey).run();
+  await runHeldBackup('after', async () => {
+    const job = await db.prepare('SELECT not_before FROM cleanup_jobs WHERE r2_key=?').bind(datedKey).first();
+    assert.ok(job.not_before > Date.now(), 'retry refreshes cleanup grace');
+    // Simulate an already selected/expired job; the shared lease still protects it.
+    await db.prepare('UPDATE cleanup_jobs SET not_before=0 WHERE r2_key=?').bind(datedKey).run();
+    await peer.scheduled({ cron: '*/15 * * * *' });
+    assert.ok(objects.has(datedPath), 'cleanup cannot delete an in-flight snapshot');
+  });
+  assert.ok(objects.has(datedPath));
+  assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM cleanup_jobs WHERE r2_key=?').bind(datedKey).first()).n, 0);
+
+  // Cleanup must also hold the lease throughout a slow DELETE, not just query it.
+  await db.prepare('DELETE FROM backup_snapshots WHERE r2_key=?').bind(datedKey).run();
+  await db.prepare('INSERT INTO cleanup_jobs(r2_key,not_before,created_at) VALUES (?,0,0)').bind(datedKey).run();
+  const deleting = Promise.withResolvers();
+  const finishDelete = Promise.withResolvers();
+  beforeDelete = async key => {
+    if (key === datedPath) { deleting.resolve(); await finishDelete.promise; }
+  };
+  const pendingCleanup = peer.scheduled({ cron: '*/15 * * * *' });
+  const deleteTimeout = setTimeout(() => deleting.reject(new Error('cleanup did not reach R2')), 10000);
+  try {
+    await deleting.promise;
+    assert.equal((await runBackup()).status, 429);
+  } finally {
+    clearTimeout(deleteTimeout);
+    finishDelete.resolve();
+    beforeDelete = async () => {};
+    await pendingCleanup;
+  }
+  assert.equal((await runBackup()).status, 200);
+
+  // Losing a lease stops publication and cannot release a successor's lease.
+  const beforeLeaseLoss = objects.get('/imgflare-test/back/latest.sql').bytes;
+  await runHeldBackup('after', async () => {
+    await db.prepare("UPDATE maintenance_locks SET owner='replacement-worker',expires_at=? WHERE name='backup'")
+      .bind(Date.now() + 900000).run();
+  }, 429);
+  assert.deepEqual(objects.get('/imgflare-test/back/latest.sql').bytes, beforeLeaseLoss);
+  assert.equal((await db.prepare("SELECT owner FROM maintenance_locks WHERE name='backup'").first()).owner, 'replacement-worker');
+  // A terminated Worker leaves a lease that a later invocation can reclaim.
+  await db.prepare("UPDATE maintenance_locks SET expires_at=0 WHERE name='backup'").run();
+  assert.equal((await runBackup()).status, 200);
+  console.log('✓ Cross-instance backup exclusion, retry grace, cleanup races and expired-lease recovery');
   const beforeCron = backupWrites;
   const worker = await mf.getWorker();
   await worker.scheduled({ cron: '0 4 * * *' });
