@@ -1,6 +1,6 @@
 import { makeThumbnail } from '../shared/thumbnail.js';
 import { IMAGE_EXT, renamePastedImage, sha256Hex } from '../shared/image.js';
-import type { ApiResponse, DuplicateCheckResult, UploadResult } from '../shared/types.js';
+import { ApiError, parseResponse, parseDuplicateResult, parseUploadResult } from '../shared/api.js';
 
 /** Paste images to upload with API_TOKEN and insert Markdown. */
 
@@ -46,7 +46,7 @@ const MAX_CONCURRENCY = 3;
 const MAX_RETRIES = 2;
 
 /** 统一的 JSON 请求；失败时抛出带错误码的 `Error`。 */
-function request<T>(
+function request(
   path: string,
   options: {
     method?: string;
@@ -54,8 +54,8 @@ function request<T>(
     formData?: FormData;
     headers?: Record<string, string>;
   } = {},
-): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
+): Promise<unknown> {
+  return new Promise<unknown>((resolve, reject) => {
     const headers: Record<string, string> = {
       'X-API-Key': API_TOKEN,
       Accept: 'application/json',
@@ -78,18 +78,12 @@ function request<T>(
       anonymous: true,
       timeout: 120_000,
       onload: (response) => {
-        let payload: ApiResponse<T> | null = null;
         try {
-          payload = JSON.parse(response.responseText) as ApiResponse<T>;
-        } catch {
-          payload = null;
+          const payload: unknown = JSON.parse(response.responseText);
+          resolve(parseResponse(payload, response.status));
+        } catch (error) {
+          reject(error instanceof ApiError ? error : new ApiError('invalid_response', response.status));
         }
-
-        if (response.status >= 200 && response.status < 300 && payload?.success !== false) {
-          resolve((payload?.data ?? payload) as T);
-          return;
-        }
-        reject(new Error(payload?.error ?? `http_${response.status}`));
       },
       onerror: () => reject(new Error('network_error')),
       ontimeout: () => reject(new Error('timeout')),
@@ -134,38 +128,31 @@ function isOwnPanel(): boolean {
 async function uploadOne(file: File): Promise<string> {
   const sha256 = await sha256Hex(file);
 
-  const check = await request<DuplicateCheckResult>('/api/upload/check', {
+  const check = parseDuplicateResult(await request('/api/upload/check', {
     method: 'POST',
     body: { sha256 },
-  });
+  }));
   if (check.exists && check.file) return check.file.url;
 
+  const thumbnail = await makeThumbnail(file);
   let lastError: unknown = null;
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
     if (attempt > 0) await delay(400 * attempt);
     try {
       const form = new FormData();
       form.append('file', file, file.name);
-      const thumbnail = await makeThumbnail(file);
       if (thumbnail) form.append('thumbnail', thumbnail, thumbnail.name);
 
-      const result = await request<UploadResult>('/api/upload', {
+      const result = parseUploadResult(await request('/api/upload', {
         method: 'POST',
         formData: form,
         headers: { 'X-File-SHA256': sha256 },
-      });
+      }), 200);
       return result.file.url;
     } catch (error) {
       lastError = error;
-      const message = error instanceof Error ? error.message : 'upload_failed';
-      // 这些错误重试也没有意义，直接放弃。
-      if (
-        /^(unauthorized|invalid_sha256|checksum_mismatch|file_too_large|unsupported_file_type|missing_file|expected_multipart)/.test(
-          message,
-        )
-      ) {
-        break;
-      }
+      if (error instanceof ApiError && error.status >= 400 && error.status < 500
+        && error.status !== 408 && error.status !== 429) break;
     }
   }
 
@@ -174,7 +161,14 @@ async function uploadOne(file: File): Promise<string> {
 
 /* 队列：同一时间最多上传 MAX_CONCURRENCY 个                                  */
 
-const pending: { file: File; target: HTMLElement | null }[] = [];
+interface PendingUpload {
+  file: File;
+  target: HTMLElement | null;
+  done: boolean;
+  url?: string;
+}
+const pending: PendingUpload[] = [];
+const insertionOrder: PendingUpload[] = [];
 let running = 0;
 
 /**
@@ -186,7 +180,9 @@ let running = 0;
 function enqueue(files: File[], target: HTMLElement | null = null): void {
   for (const file of files) {
     if (file.size === 0) continue;
-    pending.push({ file, target });
+    const item = { file, target, done: false };
+    pending.push(item);
+    insertionOrder.push(item);
   }
   pump();
 }
@@ -199,7 +195,7 @@ function pump(): void {
 
     void uploadOne(item.file)
       .then((url) => {
-        insertMarkdown(`![粘贴图片](${url})`, item.target);
+        item.url = url;
       })
       .catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
@@ -207,8 +203,20 @@ function pump(): void {
       })
       .finally(() => {
         running -= 1;
+        item.done = true;
+        flushInsertions();
         pump();
       });
+  }
+}
+
+/** Upload concurrently, but insert in paste order; failed images cannot block later ones. */
+function flushInsertions(): void {
+  while (insertionOrder[0]?.done) {
+    const item = insertionOrder.shift()!;
+    if (!item.url) continue;
+    try { insertMarkdown(`![粘贴图片](${item.url})`, item.target); }
+    catch (error) { console.error('[imgflare] 插入失败：', error); }
   }
 }
 
@@ -249,28 +257,31 @@ function isTextInput(input: HTMLInputElement): boolean {
 
 function insertMarkdown(markdown: string, target: HTMLElement | null): void {
   const editor = target ?? findEditor();
+  const block = `\n${markdown}\n`;
 
-  if (editor instanceof HTMLTextAreaElement || editor instanceof HTMLInputElement) {
+  if (editor instanceof HTMLTextAreaElement) {
     const start = editor.selectionStart ?? editor.value.length;
     const end = editor.selectionEnd ?? start;
     const before = editor.value.slice(0, start);
     const after = editor.value.slice(end);
-    // 前后补空格，避免粘进已有文字中间。
-    const prefix = before.length > 0 && !/\s$/.test(before) ? ' ' : '';
-    const suffix = after.length > 0 && !/^\s/.test(after) ? ' ' : '';
+    // 前后都有换行，让每张图片独占一行；已有换行不重复添加。
+    const prefix = before.endsWith('\n') ? '' : '\n';
+    const followingBreak = after.match(/^\r?\n/)?.[0] ?? '';
+    const suffix = followingBreak ? '' : '\n';
     const inserted = `${prefix}${markdown}${suffix}`;
 
     editor.value = before + inserted + after;
-    const caret = start + inserted.length;
+    // 复用后面的换行时也把光标移过去，下一张图片从新行开始。
+    const caret = start + inserted.length + followingBreak.length;
     editor.setSelectionRange(caret, caret);
     editor.dispatchEvent(new Event('input', { bubbles: true }));
   } else if (editor && editor.isContentEditable) {
     editor.focus();
-    document.execCommand('insertText', false, markdown);
+    document.execCommand('insertText', false, block);
   }
 
-  // 无论插没插进去，都留在剪贴板里，方便手动粘贴到别处。
-  void copyToClipboard(markdown);
+  // 单行 input 无法保留换行，只复制；手动粘贴也保持图片前后换行。
+  void copyToClipboard(block);
 }
 
 async function copyToClipboard(text: string): Promise<void> {

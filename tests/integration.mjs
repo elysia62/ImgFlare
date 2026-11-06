@@ -131,8 +131,10 @@ try {
   const db = await mf.getD1Database('DB');
   const migrations = (await readdir(resolve(root, 'backend/migrations'))).filter(name => name.endsWith('.sql')).sort();
   for (const migration of migrations) {
+    if (migration === 'init_04.sql') await db.prepare("INSERT INTO kv_meta(key,value) VALUES ('token_touch:revoked','123')").run();
     await executeScript(db, await readFile(resolve(root, 'backend/migrations', migration), 'utf8'));
   }
+  assert.equal(await db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_files_created_at'").first(), null);
   const imagePlan = (await db.prepare('EXPLAIN QUERY PLAN SELECT * FROM files WHERE r2_key=? OR thumbnail_r2_key=?').bind('i/example.png', 't/example.webp').all()).results;
   assert.ok(imagePlan.some(row => row.detail.includes('idx_files_thumbnail')), 'thumbnail lookup uses its index');
   assert.ok(!imagePlan.some(row => row.detail.includes('SCAN files')), 'image reads must not scan every file');
@@ -157,6 +159,8 @@ try {
   assert.match(await panel.text(), /id="logout"/);
   assert.equal((await call('/api/files')).status, 401);
   assert.equal((await call('/api/files', { headers: adminHeaders })).status, 200);
+  assert.equal((await call('/api/files', { headers: adminHeaders })).headers.get('cache-control'), 'no-store');
+  assert.equal((await call('/api/files')).headers.get('cache-control'), 'no-store');
   assert.equal((await call('/api/tokens', { method: 'POST', headers: { Cookie: cookie }, body: json({ name: 'denied' }) })).status, 403);
 
   // Invalid signatures and expired sessions cannot grant administrator access.
@@ -169,6 +173,26 @@ try {
   }
   console.log('✓ Panel login, Turnstile, CSRF, invalid signatures and expired cookies');
 
+  // Reserve attempts before validation so a concurrent burst cannot lose counts.
+  const loginIp = '198.51.100.42';
+  const loginKey = 'login_fail:' + loginIp;
+  const attemptLogin = (password = 'wrong-password', challenge = 'valid-test-challenge') => call('/api/login', {
+    method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json', 'CF-Connecting-IP': loginIp },
+    body: json({username: bindings.ADMIN_USERNAME, password, 'cf-turnstile-response': challenge}),
+  });
+  const burst = await Promise.all(Array.from({length:16}, () => attemptLogin()));
+  assert.equal(burst.filter(r => r.status === 401).length, 8);
+  assert.equal(burst.filter(r => r.status === 429).length, 8);
+  const counter = await db.prepare('SELECT value FROM kv_meta WHERE key=?').bind(loginKey).first();
+  assert.equal(counter.value.split(':')[0], '8');
+  await db.prepare('UPDATE kv_meta SET value=? WHERE key=?').bind('8:' + (Date.now() - 900001), loginKey).run();
+  assert.equal((await attemptLogin(bindings.ADMIN_PASSWORD)).status, 200);
+  assert.equal(await db.prepare('SELECT value FROM kv_meta WHERE key=?').bind(loginKey).first(), null);
+  assert.equal((await attemptLogin('wrong-password','invalid')).status,403);
+  assert.equal((await db.prepare('SELECT value FROM kv_meta WHERE key=?').bind(loginKey).first()).value.split(':')[0], '1');
+  await db.prepare('DELETE FROM kv_meta WHERE key=?').bind(loginKey).run();
+  console.log('✓ Atomic login limits, window expiry and successful-login reset');
+
   const tokenResponse = await call('/api/tokens', { method: 'POST', headers: adminHeaders, body: json({ name: "油猴 ' token\n\u0000" }) });
   assert.equal(tokenResponse.status, 200);
   const token = (await tokenResponse.json()).data;
@@ -179,6 +203,15 @@ try {
     assert.equal(checked.status, 200); // no Origin and no login needed
     assert.equal(checked.headers.get('set-cookie'), null);
   }
+  const lastUsedAt = () => db.prepare('SELECT last_used_at FROM api_tokens WHERE id=?').bind(token.id).first('last_used_at');
+  assert.ok(await lastUsedAt() >= token.createdAt, 'first use records the token timestamp');
+  const recentUse = Date.now() - 60_000;
+  await db.prepare('UPDATE api_tokens SET last_used_at=? WHERE id=?').bind(recentUse, token.id).run();
+  assert.equal((await call('/api/upload/check', { method:'POST', headers:keyHeaders, body:json({sha256:sha}) })).status, 200);
+  assert.equal(await lastUsedAt(), recentUse, 'repeated use within an hour does not write a timestamp');
+  await db.prepare('UPDATE api_tokens SET last_used_at=? WHERE id=?').bind(Date.now() - 3_600_001, token.id).run();
+  assert.equal((await call('/api/upload/check', { method:'POST', headers:keyHeaders, body:json({sha256:sha}) })).status, 200);
+  assert.ok(await lastUsedAt() > recentUse, 'use after an hour refreshes the timestamp');
   for (const key of ['invalid', 'cph_' + 'x'.repeat(200)]) {
     assert.equal((await call('/api/files', { headers: { Cookie: cookie, 'X-API-Key': key } })).status, 401);
   }
@@ -203,16 +236,45 @@ try {
   scriptWindow.top = scriptWindow.self = scriptWindow;
   let copied;
   let scriptFailure;
-  const done = new Promise((resolveDone, rejectDone) => { copied = resolveDone; scriptFailure = rejectDone; });
+  let overrideScriptRequest;
+  const scriptDocument = {
+    readyState: 'complete', activeElement: null, querySelectorAll: () => [],
+    addEventListener: (name, handler) => handlers.set(name, handler),
+    execCommand: (command, _showUi, text) => {
+      assert.equal(command, 'insertText');
+      scriptDocument.activeElement.inserted.push(text);
+      return true;
+    },
+  };
+  class ScriptElement {
+    isContentEditable = false;
+    inserted = [];
+    focus() { scriptDocument.activeElement = this; }
+  }
+  class ScriptTextarea extends ScriptElement {
+    inputEvents = 0;
+    constructor(value, start, end = start) {
+      super();
+      this.value = value;
+      this.setSelectionRange(start, end);
+    }
+    setSelectionRange(start, end) { this.selectionStart = start; this.selectionEnd = end; }
+    dispatchEvent(event) {
+      assert.equal(event.type, 'input');
+      assert.equal(event.bubbles, true);
+      this.inputEvents++;
+    }
+  }
+  class ScriptInput extends ScriptElement { type = 'text'; value = '单行输入'; }
   const source = (await readFile(resolve(root, 'web/userscript/image-uploader.user.js'), 'utf8'))
     .replace(/\b(var|const|let) API_URL = [^;]+;/, `const API_URL = ${json(origin)};`)
     .replace(/\b(var|const|let) API_TOKEN = [^;]+;/, `const API_TOKEN = ${json(token.token)};`);
   runInNewContext(source, {
     window: scriptWindow,
-    document: { readyState: 'complete', activeElement: null, querySelectorAll: () => [], addEventListener: (name, handler) => handlers.set(name, handler) },
+    document: scriptDocument,
     navigator: { clipboard: { writeText: async (value) => copied(value) } },
-    crypto: globalThis.crypto, URL, File, Blob, FormData, TextEncoder, Uint8Array,
-    HTMLElement: class {}, HTMLTextAreaElement: class {}, HTMLInputElement: class {},
+    crypto: globalThis.crypto, URL, File, Blob, FormData, TextEncoder, Uint8Array, Event,
+    HTMLElement: ScriptElement, HTMLTextAreaElement: ScriptTextarea, HTMLInputElement: ScriptInput,
     setTimeout, clearTimeout,
     console: { error: (message) => scriptFailure(new Error(message)) },
     GM_xmlhttpRequest: (details) => {
@@ -222,22 +284,73 @@ try {
         assert.equal(details.headers.Cookie, undefined);
         const path = new URL(details.url).pathname;
         requestedPaths.push(path);
-        const response = await call(path, { method: details.method, headers: details.headers, body: details.data });
+        const response = overrideScriptRequest ? await overrideScriptRequest(details)
+          : await call(path, { method: details.method, headers: details.headers, body: details.data });
         details.onload({ status: response.status, responseText: await response.text() });
       })().catch(scriptFailure);
     },
   });
   assert.deepEqual([...handlers.keys()], ['paste']);
-  handlers.get('paste')({
-    clipboardData: { files: [new File([png], 'script.png', { type: 'image/png' })], items: [] },
-    preventDefault() {}, stopPropagation() {},
-  });
-  let timer;
-  try {
-    const markdown = await Promise.race([done, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('userscript upload timed out')), 5000); })]);
-    assert.match(markdown, /^!\[粘贴图片\]\(https:\/\/imgflare.test\/i\//);
-    assert.deepEqual(requestedPaths, ['/api/upload/check', '/api/upload']);
-  } finally { clearTimeout(timer); }
+  const pasteImages = async (count = 1, expectedFailures = 0) => {
+    const copies = [];
+    let failures = 0;
+    const done = new Promise((resolveDone, rejectDone) => {
+      const finish = () => { if (copies.length + failures === count) resolveDone(copies); };
+      copied = value => { copies.push(value); finish(); };
+      scriptFailure = error => {
+        if (++failures > expectedFailures) rejectDone(error);
+        else finish();
+      };
+    });
+    handlers.get('paste')({
+      clipboardData: {
+        files: Array.from({ length: count }, (_, i) => new File([png], `script-${i}.png`, { type: 'image/png' })),
+        items: [],
+      },
+      preventDefault() {}, stopPropagation() {},
+    });
+    let timer;
+    try {
+      return await Promise.race([done, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('userscript upload timed out')), 5000); })]);
+    } finally { clearTimeout(timer); }
+  };
+  const [block] = await pasteImages();
+  assert.match(block, /^\n!\[粘贴图片\]\(https:\/\/imgflare.test\/i\/[^\n]+\)\n$/);
+  assert.deepEqual(requestedPaths, ['/api/upload/check', '/api/upload']);
+  const imageMarkdown = block.trim();
+  for (const [value, start, end, expected] of [
+    ['前后', 1, 1, `前\n${imageMarkdown}\n后`],
+    ['', 0, 0, block],
+    ['前后', 0, 0, `${block}前后`],
+    ['前后', 2, 2, `前后${block}`],
+    ['前\n\n后', 2, 2, `前\n${imageMarkdown}\n后`],
+    ['前  后', 2, 2, `前 \n${imageMarkdown}\n 后`],
+    ['前选中后', 1, 3, `前\n${imageMarkdown}\n后`],
+  ]) {
+    const editor = scriptDocument.activeElement = new ScriptTextarea(value, start, end);
+    assert.deepEqual(await pasteImages(), [block]);
+    assert.equal(editor.value, expected);
+    assert.equal(editor.selectionStart, expected.indexOf(imageMarkdown) + imageMarkdown.length + 1);
+    assert.equal(editor.selectionEnd, editor.selectionStart);
+    assert.equal(editor.inputEvents, 1);
+  }
+  // Consecutive and concurrent uploads keep one image per line, including when
+  // the first insertion reuses an existing newline after the cursor.
+  const multiEditor = scriptDocument.activeElement = new ScriptTextarea('前\n\n后', 2);
+  await pasteImages();
+  await pasteImages(3);
+  assert.equal(multiEditor.value, `前\n${Array(4).fill(imageMarkdown).join('\n')}\n后`);
+  assert.equal(multiEditor.inputEvents, 4);
+  assert.equal(multiEditor.selectionStart, multiEditor.value.indexOf('后'));
+
+  const richEditor = scriptDocument.activeElement = new ScriptElement();
+  richEditor.isContentEditable = true;
+  assert.deepEqual(await pasteImages(), [block]);
+  assert.deepEqual(richEditor.inserted, [block], 'rich editors receive both line breaks');
+  const singleLine = scriptDocument.activeElement = new ScriptInput();
+  assert.deepEqual(await pasteImages(), [block]);
+  assert.equal(singleLine.value, '单行输入', 'single-line inputs only copy the multiline result');
+  console.log('✓ Userscript line breaks, selection replacement, consecutive/batch paste and clipboard formatting');
   const form = new FormData();
   form.append('file', new Blob([png], { type: 'image/png' }), "截图' test.png");
   const uploaded = await call('/api/upload', {
@@ -245,6 +358,58 @@ try {
   });
   assert.equal(uploaded.status, 200, await uploaded.clone().text());
   const file = (await uploaded.json()).file;
+  for (const prefix of ['/api', '//api', '///api']) {
+    const largeForm = new FormData();
+    largeForm.append('file', new Blob([png], {type:'image/png'}), 'thumbnail.png');
+    largeForm.append('padding', 'x'.repeat(400*1024));
+    const encoded = new Response(largeForm);
+    const bytes = await encoded.arrayBuffer();
+    const oversized = await call(prefix + '/files/' + file.id + '/thumbnail', {
+      method:'POST', headers:{Origin:origin,Cookie:cookie,'Content-Type':encoded.headers.get('content-type')}, body:bytes,
+    });
+    assert.equal(oversized.status, 413, 'all leading-slash variants enforce the body limit');
+  }
+  const orderedEditor = scriptDocument.activeElement = new ScriptTextarea('前后', 1);
+  overrideScriptRequest = async details => {
+    if (new URL(details.url).pathname.endsWith('/check')) {
+      return Response.json({success:true,exists:false});
+    }
+    const name = details.data.get('file').name;
+    const index = Number(name.match(/script-(\d+)/)?.[1]);
+    assert.ok(Number.isInteger(index));
+    await new Promise(resolve => setTimeout(resolve, index === 0 ? 60 : index === 1 ? 30 : 0));
+    return Response.json({success:true,deduplicated:false,file:{...file,url:file.url + '#' + index}});
+  };
+  await pasteImages(3);
+  assert.equal(orderedEditor.value, '前\n' + [0,1,2].map(i => `![粘贴图片](${file.url}#${i})`).join('\n') + '\n后');
+  const failedEditor = scriptDocument.activeElement = new ScriptTextarea('前后', 1);
+  overrideScriptRequest = async details => {
+    if (new URL(details.url).pathname.endsWith('/check')) {
+      return Response.json({success:true,exists:false});
+    }
+    const name = details.data.get('file').name;
+    const index = Number(name.match(/script-(\d+)/)?.[1]);
+    assert.ok(Number.isInteger(index));
+    if (index === 0) {
+      await new Promise(resolve => setTimeout(resolve, 60));
+      return Response.json({success:false,error:'unauthorized'}, {status:401});
+    }
+    return Response.json({success:true,deduplicated:false,file:{...file,url:file.url + '#' + index}});
+  };
+  const remainingCopies = await pasteImages(3, 1);
+  assert.equal(remainingCopies.length, 2);
+  assert.equal(failedEditor.value, '前\n' + [1,2].map(i => `![粘贴图片](${file.url}#${i})`).join('\n') + '\n后');
+  scriptDocument.activeElement = orderedEditor;
+  for (const payload of [null, {}, {success:true,exists:true,file:{}}]) {
+    overrideScriptRequest = async () => Response.json(payload);
+    const before = orderedEditor.value;
+    await assert.rejects(pasteImages(), /invalid_response/);
+    assert.equal(orderedEditor.value, before);
+  }
+  overrideScriptRequest = async details => Response.json(new URL(details.url).pathname.endsWith('/check')
+    ? {success:true,exists:false} : {success:true,deduplicated:false,file:{}});
+  await assert.rejects(pasteImages(), /invalid_response/);
+  overrideScriptRequest = undefined;
   const duplicate = await call('/api/upload/check', { method: 'POST', headers: keyHeaders, body: json({ sha256: imageHash }) });
   assert.equal((await duplicate.json()).exists, true);
   const publicImage = await call(new URL(file.url).pathname);
@@ -533,6 +698,7 @@ try {
   console.log('✓ Full schema restore, backup retention, Cron retries and deletion cache invalidation');
 
   assert.equal((await call('/api/tokens/' + token.id, { method: 'DELETE', headers: adminHeaders })).status, 204);
+  assert.equal((await db.prepare("SELECT COUNT(*) AS n FROM kv_meta WHERE key GLOB 'token_touch:*'").first()).n, 0);
   assert.equal((await call('/api/upload/check', { method: 'POST', headers: keyHeaders, body: json({ sha256: imageHash }) })).status, 401);
   await mf.setOptions(runtimeOptions({ ...bindings, SESSION_SECRET: randomBytes(32).toString('hex') }));
   assert.equal((await call('/api/files', { headers: adminHeaders })).status, 401);

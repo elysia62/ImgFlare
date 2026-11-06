@@ -11,19 +11,8 @@ import type {
   UploadResult,
 } from '../../shared/types.js';
 
-/** Raised when the server answers with `success: false`. */
-export class ApiError extends Error {
-  readonly code: string;
-  readonly status: number;
-
-  constructor(code: string, status: number) {
-    super(code);
-    this.name = 'ApiError';
-    this.code = code;
-    this.status = status;
-  }
-
-}
+import { ApiError, parseResponse, parseUploadResult, parseDuplicateResult } from '../../shared/api.js';
+export { ApiError, parseUploadResult } from '../../shared/api.js';
 
 /** Perform a request and unwrap the `{ success, data }` envelope. */
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -45,33 +34,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
   if (response.status === 204) return undefined as T;
   const payload: unknown = await response.json().catch(() => null);
-  if (!isObject(payload)) throw new ApiError('invalid_response', response.status);
-  if (!response.ok || payload.success === false) {
-    throw new ApiError(typeof payload.error === 'string' ? payload.error : 'http_error', response.status);
-  }
-  if (payload.success !== true) throw new ApiError('invalid_response', response.status);
-  return ('data' in payload ? payload.data : payload) as T;
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function isFile(value: unknown): value is FileInfo {
-  return isObject(value) && ['id','sha256','name','contentType','url','markdown'].every((key) => typeof value[key] === 'string')
-    && typeof value.size === 'number' && typeof value.createdAt === 'number'
-    && (value.thumbnailUrl === null || typeof value.thumbnailUrl === 'string');
-}
-
-export function parseUploadResult(value: unknown, status: number): UploadResult {
-  if (!isObject(value)) throw new ApiError('invalid_response', status);
-  if (status < 200 || status >= 300 || value.success === false) {
-    throw new ApiError(typeof value.error === 'string' ? value.error : 'upload_failed', status);
-  }
-  if (value.success !== true || typeof value.deduplicated !== 'boolean' || !isFile(value.file)) {
-    throw new ApiError('invalid_response', status);
-  }
-  return { success: true, deduplicated: value.deduplicated, file: value.file };
+  return parseResponse(payload, response.status) as T;
 }
 
 // Auth
@@ -104,10 +67,10 @@ export function me(): Promise<MeResponse> {
 export function checkDuplicate(
   sha256: string,
 ): Promise<DuplicateCheckResult> {
-  return request<DuplicateCheckResult>('/api/upload/check', {
+  return request<unknown>('/api/upload/check', {
     method: 'POST',
     body: JSON.stringify({ sha256 }),
-  });
+  }).then(parseDuplicateResult);
 }
 
 /** Multipart upload with progress reporting. */

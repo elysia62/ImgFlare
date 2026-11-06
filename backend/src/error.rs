@@ -75,9 +75,7 @@ impl ApiError {
             "error": self.code(),
         });
 
-        Response::from_json(&body)
-            .unwrap_or_else(|_| Response::error("internal_error", 500).unwrap())
-            .with_status(self.status())
+        crate::response::json(body, self.status())
     }
 }
 

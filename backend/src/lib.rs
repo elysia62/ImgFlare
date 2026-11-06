@@ -59,6 +59,7 @@ pub async fn scheduled(event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
         if event.cron() == "0 4 * * *" {
             let report = backup::run_backup_with_retries(&env, &cfg).await?;
             worker::console_log!("{}", serde_json::json!({"event":"backup_completed", "bytes":report.bytes, "sha256":report.sha256}));
+            return Ok(()); // The backup already ran cleanup.
         }
         cleanup::run(&db, &r2::R2::new(&cfg.r2)).await
     }.await;

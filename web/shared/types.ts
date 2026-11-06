@@ -13,18 +13,11 @@ export interface FileInfo {
   thumbnailUrl: string | null;
 }
 
-/** The envelope every JSON endpoint uses. */
-export interface ApiResponse<T> {
-  success: boolean;
-  data?: T;
-  error?: string;
-}
-
 /** `POST /api/upload/check` */
 export interface DuplicateCheckResult {
   success: boolean;
   exists: boolean;
-  file?: FileInfo;
+  file?: FileInfo | null;
 }
 
 /** `POST /api/upload` */
@@ -98,8 +91,6 @@ export interface UploadTask {
   result?: UploadResult;
   /** Human-readable reason, populated on failure. */
   error?: string;
-  /** How many times we have already retried. */
-  attempts: number;
 }
 
 /** Turn a server-side `error` code into something a human can read. */
@@ -120,7 +111,6 @@ export function humanizeError(code: string): string {
     file_must_be_a_file: '上传字段不是文件',
     empty_file: '文件内容为空',
     empty_filename: '文件名为空',
-    size_mismatch: '文件大小校验失败',
     file_too_large: '文件超过大小限制',
     unsupported_file_type: '只支持图片（png、jpg、webp、gif、avif、svg、jxl、heic、tiff 等）',
     checksum_mismatch: '文件内容和校验值不一致',
@@ -133,6 +123,7 @@ export function humanizeError(code: string): string {
     name_required: '请填写 Token 名称',
     name_too_long: 'Token 名称过长',
     invalid_cursor: '分页参数无效，请刷新列表',
+    network_error: '网络错误，请重试',
     timeout: '请求超时，请重试',
     upload_busy: '上传繁忙，请稍后重试',
     invalid_response: '服务器响应格式错误',

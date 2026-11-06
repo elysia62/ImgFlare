@@ -25,9 +25,12 @@ pub fn no_content() -> Response {
 
 /// Serialise a JSON value with the right headers.
 pub fn json(body: serde_json::Value, status: u16) -> Response {
-    Response::from_json(&body)
+    let mut response = Response::from_json(&body)
         .unwrap_or_else(|_| Response::error("internal_error", 500).unwrap())
-        .with_status(status)
+        .with_status(status);
+    // Authentication state and management data must not survive in HTTP caches.
+    let _ = response.headers_mut().set("Cache-Control", "no-store");
+    response
 }
 
 /// Build a response with explicit headers, for things like file downloads.

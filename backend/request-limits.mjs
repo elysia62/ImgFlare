@@ -21,7 +21,8 @@ const tooLarge = () => Response.json({ success: false, error: "file_too_large" }
 });
 
 export async function fetchWithLimit(request, run) {
-  const path = new URL(request.url).pathname;
+  // Match the Rust router, which strips all leading slashes.
+  const path = '/' + new URL(request.url).pathname.replace(/^\/+/, '');
   const limit = path === "/api/upload" ? UPLOAD_LIMIT
     : /^\/api\/files\/[^/]+\/thumbnail$/.test(path) ? THUMBNAIL_LIMIT : 0;
   if (request.method !== "POST" || !limit) return run(request);

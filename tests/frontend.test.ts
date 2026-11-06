@@ -3,8 +3,10 @@ import { ApiError, parseUploadResult, uploadFile } from '../web/frontend/src/api
 import { FileBrowser } from '../web/frontend/src/files.ts';
 import { UploadQueue } from '../web/frontend/src/upload.ts';
 import { initTabs, renderQueue } from '../web/frontend/src/app.ts';
+import { initLoginPage } from '../web/frontend/src/auth.ts';
 import { copyText } from '../web/frontend/src/clipboard.ts';
 import { makeThumbnail } from '../web/shared/thumbnail.ts';
+import { parseResponse, parseDuplicateResult } from '../web/shared/api.ts';
 
 // A small DOM boundary; the queue, API client and browser are the real modules.
 class Element extends EventTarget {
@@ -28,6 +30,8 @@ class Element extends EventTarget {
   disabled = false;
   style: Record<string, string> = {};
   isConnected = true;
+  focus() {}
+  select() {}
   setAttribute(key: string, value: string) { (this as any)[key] = value; }
   append(...nodes: Element[]) { for (const node of nodes) { node.remove(); node.parent = this; this.children.push(node); } }
   remove() {
@@ -133,6 +137,45 @@ test('clipboard writes report success or failure without changing the page', asy
   expect(await copyText('unavailable')).toBe(false);
 });
 
+test.each([
+  {code:'network_error', status:0, message:'网络错误，请重试'},
+  {code:'timeout', status:0, message:'请求超时，请重试'},
+  {code:'internal_error', status:500, message:'服务器内部错误'},
+  {code:'unauthorized', status:401, message:'用户名或密码不正确'},
+  {code:'turnstile_failed', status:403, message:'人机验证失败，请重试'},
+])('login reports $code accurately and resets the challenge', async ({code,status,message}) => {
+  const nodes = new Map(['login-form','username','password','login-submit','login-error','turnstile','toggle-pwd']
+    .map(id => [id,new Element()]));
+  const node = (id: string) => nodes.get(id)!;
+  Object.assign(document, {body:{dataset:{turnstileSiteKey:'test'}},getElementById:node});
+  let resets = 0;
+  const redirects: string[] = [];
+  Object.assign(window, {
+    location:{replace:(url: string) => redirects.push(url)},
+    turnstile:{
+      render: (_host: unknown, options: {callback:(token: string) => void}) => { options.callback('challenge'); return 'widget'; },
+      reset: () => { resets++; },
+    },
+  });
+  globalThis.fetch = (async path => {
+    if (path === '/api/me') return Response.json({success:true,data:{authenticated:false}});
+    if (code === 'network_error') throw new TypeError('Failed to fetch');
+    if (code === 'timeout') throw new DOMException('Timed out','TimeoutError');
+    return Response.json({success:false,error:code},{status});
+  }) as typeof fetch;
+  await initLoginPage();
+  node('username').value = 'admin';
+  node('password').value = 'password';
+  node('login-form').dispatchEvent(new Event('submit',{cancelable:true}));
+  await tick();
+  expect(node('login-error').textContent).toBe(message);
+  expect(node('login-error').hidden).toBe(false);
+  expect(node('login-submit').disabled).toBe(false);
+  expect(node('turnstile').hidden).toBe(false);
+  expect(resets).toBe(1);
+  expect(redirects).toEqual([]);
+});
+
 test('search supersedes an in-flight load and ignores late results and finalizers', async () => {
   const requests: {path:string;signal:AbortSignal;result:ReturnType<typeof deferred<Response>>}[] = [];
   globalThis.fetch = ((path,init) => {
@@ -191,8 +234,26 @@ test('clear and dismiss retain hashing and checking work until it finishes', asy
   expect(queue.activeCount).toBe(0);
 });
 
+test('retry cannot bypass file size or extension validation', async () => {
+  let requests = 0;
+  globalThis.fetch = (async () => {
+    requests++;
+    return Response.json({success:true,exists:false});
+  }) as typeof fetch;
+  const queue = new UploadQueue(4);
+  queue.add([new File(['oversized'],'large.png'),new File(['x'],'small.txt')]);
+  const rejected = queue.list();
+  expect(rejected.map(task => task.state)).toEqual(['failed','failed']);
+  for (const task of rejected) queue.retry(task.key);
+  await tick();
+  expect(queue.list().map(task => task.state)).toEqual(['failed','failed']);
+  expect(queue.activeCount).toBe(0);
+  expect(requests).toBe(0);
+  expect(Xhr.instances.length).toBe(0);
+});
+
 test('progress updates preserve DOM rows and completion renders actions', () => {
-  const task: any = {key:'task',file:new File(['x'],'x.png'),state:'uploading',progress:0.1,attempts:0};
+  const task: any = {key:'task',file:new File(['x'],'x.png'),state:'uploading',progress:0.1};
   const queue: any = {list:()=>[task],remove:()=>{}};
   const list = new Element();
   renderQueue(list as any,queue);
@@ -222,6 +283,17 @@ test('invalid upload envelopes fail explicitly and upload timeouts are retryable
   const error = await rejection;
   expect(error).toBeInstanceOf(ApiError);
   expect(error.code).toBe('timeout');
+});
+
+test('shared response validation rejects malformed success and duplicate results', () => {
+  for (const bad of [null, [], {}, { success: 'true' }]) {
+    expect(() => parseResponse(bad, 200)).toThrow('invalid_response');
+  }
+  for (const bad of [null, {}, { success: true, exists: true, file: {} }, { success: true, exists: false, file: {} }]) {
+    expect(() => parseDuplicateResult(bad)).toThrow('invalid_response');
+  }
+  expect(() => parseResponse({success:false,error:'unauthorized'},401)).toThrow('unauthorized');
+  expect(parseDuplicateResult({success:true,exists:false,file:null}).exists).toBe(false);
 });
 
 test('unsupported thumbnail runtime falls back without blocking upload', async () => {

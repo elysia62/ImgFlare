@@ -37,15 +37,15 @@ pub async fn handle_get(
     init.with_method(Method::Get).with_headers(cache_headers);
     let cache_req = Request::new_with_init(url.as_str(), &init)?;
     // If-Range needs validation against origin metadata before interpreting Range.
-    if req.headers().get("If-Range")?.is_none() {
-        if let Some(cached) = Cache::default().get(&cache_req, false).await? {
-            if req.method() != Method::Head {
-                return Ok(cached);
-            }
-            return Ok(Response::empty()?
-                .with_status(cached.status_code())
-                .with_headers(cached.headers().clone()));
+    if req.headers().get("If-Range")?.is_none()
+        && let Some(cached) = Cache::default().get(&cache_req, false).await?
+    {
+        if req.method() != Method::Head {
+            return Ok(cached);
         }
+        return Ok(Response::empty()?
+            .with_status(cached.status_code())
+            .with_headers(cached.headers().clone()));
     }
     let (content_type, size, etag, object_modified) = if prefix == "i" {
         (
@@ -125,10 +125,8 @@ pub async fn handle_get(
     };
     let mut object = r2.get_range(&key, normalized.as_deref()).await?;
     // Preserve R2 validators; never forward S3 metadata or credentials.
-    for name in ["ETag"] {
-        if let Some(value) = object.headers().get(name)? {
-            headers.set(name, &value)?;
-        }
+    if let Some(value) = object.headers().get("ETag")? {
+        headers.set("ETag", &value)?;
     }
     if normalized.is_some() && object.status_code() != 206 {
         return Err(ApiError::Internal("R2 ignored a byte range".into()));

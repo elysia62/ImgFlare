@@ -218,7 +218,6 @@ async fn handle_login(mut req: Request, env: &Env) -> ApiResult<Response> {
     turnstile::verify(env, &body.turnstile_token, ip.as_deref()).await?;
 
     if !auth::verify_credentials(env, &body.username, &body.password)? {
-        auth::record_login_failure(&db, ip.as_deref()).await?;
         // Same shape as a Turnstile failure, so the response does not reveal
         // which factor was wrong.
         return Err(ApiError::Unauthorized);
@@ -293,7 +292,7 @@ async fn handle_upload_check(mut req: Request, env: &Env) -> ApiResult<Response>
     let result = upload::handle_check(&db, &current_origin(&req)?, body).await?;
 
     if let Principal::Token { id } = principal {
-        let _ = auth::touch_token_throttled(&db, &id).await;
+        let _ = db.touch_token(&id).await;
     }
 
     Ok(response::ok_raw(serde_json::json!({
@@ -321,7 +320,7 @@ async fn handle_upload(mut req: Request, env: &Env, cfg: &Config) -> ApiResult<R
     let outcome = upload::handle_upload(&mut req, &db, cfg, &origin, declared).await?;
 
     if let Principal::Token { id } = principal {
-        let _ = auth::touch_token_throttled(&db, &id).await;
+        let _ = db.touch_token(&id).await;
     }
 
     Ok(response::ok_raw(serde_json::json!({

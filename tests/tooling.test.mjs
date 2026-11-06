@@ -77,11 +77,19 @@ test('large declared bodies are rejected before the handler, valid bodies pass',
     async request => new Response(await request.text()));
   assert.equal(await accepted.text(),'small');
 });
+test('extra leading slashes retain upload size and concurrency limits', async () => {
+  for (const path of ['//api/upload', '///api/files/id/thumbnail']) {
+    const response = await fetchWithLimit(new Request('https://test' + path, {
+      method: 'POST', headers: { 'Content-Length': String(51 * 1024 * 1024) },
+    }), () => { throw new Error('must reject before parsing'); });
+    assert.equal(response.status, 413);
+  }
+});
 test('multipart parsing is bounded per isolate and permits are released on errors', async () => {
   let releaseFirst;
   const held = new Promise(done=>{releaseFirst=done;});
   let entered=0;
-  const request = () => new Request('https://test/api/upload',{method:'POST',body:'small'});
+  const request = () => new Request('https://test//api/upload',{method:'POST',body:'small'});
   const first = fetchWithLimit(request(),async () => { entered++; await held; throw new Error('failed upload'); }).catch(error=>error);
   await new Promise(resolve=>setTimeout(resolve,0));
   const queued = Array.from({length:3},()=>fetchWithLimit(request(),async request=>{

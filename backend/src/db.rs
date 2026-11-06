@@ -393,11 +393,13 @@ impl Db {
     }
 
     pub async fn touch_token(&self, id: &str) -> ApiResult<()> {
+        let now = crate::utils::now_ms();
         let stmt = self
-            .prepare("UPDATE api_tokens SET last_used_at = ? WHERE id = ?")
+            .prepare("UPDATE api_tokens SET last_used_at = ?1 WHERE id = ?2 AND (last_used_at IS NULL OR last_used_at <= ?3)")
             .bind(&[
-                JsValue::from_f64(crate::utils::now_ms() as f64),
+                JsValue::from_f64(now as f64),
                 JsValue::from_str(id),
+                JsValue::from_f64((now - 3_600_000) as f64),
             ])
             .map_err(ApiError::from)?;
         stmt.run().await.map_err(ApiError::from)?;
@@ -414,30 +416,27 @@ impl Db {
         Ok(result.meta()?.and_then(|m| m.changes).unwrap_or(0) as u64)
     }
 
-    // kv_meta — used solely to throttle `last_used_at` writes
-
-    pub async fn meta_get(&self, key: &str) -> ApiResult<Option<String>> {
-        let stmt = self
-            .prepare("SELECT value FROM kv_meta WHERE key = ?")
-            .bind(&[JsValue::from_str(key)])
-            .map_err(ApiError::from)?;
-        Ok(stmt
-            .first::<MetaRow>(None)
-            .await
-            .map_err(ApiError::from)?
-            .map(|r| r.value))
-    }
-
-    pub async fn meta_set(&self, key: &str, value: &str) -> ApiResult<()> {
-        let stmt = self
-            .prepare(
-                "INSERT INTO kv_meta (key, value) VALUES (?, ?) \
-                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            )
-            .bind(&[JsValue::from_str(key), JsValue::from_str(value)])
-            .map_err(ApiError::from)?;
-        stmt.run().await.map_err(ApiError::from)?;
-        Ok(())
+    /// Increment or reset the fixed-window counter in one D1 statement.
+    /// A full window returns no row, so concurrent requests cannot exceed the cap.
+    pub async fn reserve_login_attempt(
+        &self,
+        key: &str,
+        window_ms: i64,
+        max: i64,
+    ) -> ApiResult<bool> {
+        let now = crate::utils::now_ms();
+        let row = self.prepare(
+            "INSERT INTO kv_meta(key,value) VALUES (?1,'1:' || ?2) \
+             ON CONFLICT(key) DO UPDATE SET value=CASE \
+             WHEN CAST(substr(value,instr(value,':')+1) AS INTEGER)<=?3 THEN '1:' || ?2 \
+             ELSE (CAST(substr(value,1,instr(value,':')-1) AS INTEGER)+1) || substr(value,instr(value,':')) END \
+             WHERE CAST(substr(value,instr(value,':')+1) AS INTEGER)<=?3 \
+             OR CAST(substr(value,1,instr(value,':')-1) AS INTEGER)<?4 RETURNING key"
+        ).bind(&[
+            JsValue::from_str(key), JsValue::from_f64(now as f64),
+            JsValue::from_f64((now-window_ms) as f64), JsValue::from_f64(max as f64),
+        ])?.first::<String>(Some("key")).await?;
+        Ok(row.is_some())
     }
 
     pub async fn meta_delete(&self, key: &str) -> ApiResult<()> {
@@ -477,11 +476,6 @@ fn escape_like(input: &str) -> String {
 #[derive(Deserialize)]
 struct CountRow {
     n: i64,
-}
-
-#[derive(Deserialize)]
-struct MetaRow {
-    value: String,
 }
 
 fn optional(value: &Option<String>) -> JsValue {

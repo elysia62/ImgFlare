@@ -55,44 +55,17 @@ export class UploadQueue {
       if (file.size === 0) {
         continue;
       }
-      if (!IMAGE_EXT.test(file.name)) {
-        const key = this.nextKey();
-        this.tasks.set(key, {
-          key,
-          file,
-          state: 'failed',
-          progress: 0,
-          error: '只支持图片（png、jpg、webp、gif、avif、svg、jxl、heic、tiff 等）',
-          attempts: 0,
-        });
-        this.order.push(key);
-        continue;
-      }
-      if (file.size > this.maxFileSize) {
-        // Surface the rejection immediately rather than at upload time.
-        const key = this.nextKey();
-        this.tasks.set(key, {
-          key,
-          file,
-          state: 'failed',
-          progress: 0,
-          error: `文件超过大小限制（最大 ${formatBytes(this.maxFileSize)}）`,
-          attempts: 0,
-        });
-        this.order.push(key);
-        continue;
-      }
-
       const key = this.nextKey();
+      const error = this.validationError(file);
       this.tasks.set(key, {
         key,
         file,
-        state: 'pending',
+        state: error ? 'failed' : 'pending',
         progress: 0,
-        attempts: 0,
+        error,
       });
       this.order.push(key);
-      this.pending.push(key);
+      if (!error) this.pending.push(key);
     }
 
     this.notify();
@@ -103,11 +76,11 @@ export class UploadQueue {
   retry(key: string): void {
     const task = this.tasks.get(key);
     if (!task || task.state !== 'failed') return;
+    if (this.validationError(task.file)) return;
 
     task.state = 'pending';
     task.error = undefined;
     task.progress = 0;
-    task.attempts = 0;
     this.pending.push(key);
     this.notify();
     this.pump();
@@ -138,6 +111,12 @@ export class UploadQueue {
   }
 
   // -- scheduler -----------------------------------------------------------
+
+  private validationError(file: File): string | undefined {
+    if (!IMAGE_EXT.test(file.name)) return 'unsupported_file_type';
+    if (file.size > this.maxFileSize) return `文件超过大小限制（最大 ${formatBytes(this.maxFileSize)}）`;
+    return undefined;
+  }
 
   private pump(): void {
     while (this.running < MAX_CONCURRENCY && this.pending.length > 0) {
@@ -193,7 +172,6 @@ export class UploadQueue {
 
   private async uploadWithRetry(task: UploadTask, sha256: string, thumbnail: File | null): Promise<void> {
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
-      task.attempts = attempt;
       task.state = 'uploading';
       task.progress = 0;
       this.notify();
@@ -227,7 +205,7 @@ export class UploadQueue {
     task.progress = 0;
 
     if (error instanceof ApiError) {
-      task.error = error.code === 'network_error' ? '网络错误，请重试' : error.code;
+      task.error = error.code;
     } else if (error instanceof Error) {
       task.error = error.message;
     } else {

@@ -24,7 +24,7 @@
     "db:migrate:local": "bun x wrangler d1 migrations apply DB --local",
     "db:migrate:remote": "bun x wrangler d1 migrations apply DB --remote",
     "verify": "bun run typecheck && bun run check:contract && bun run test:frontend && bun run test:tooling && bun run test:rust && bun run build && node tests/integration.mjs",
-    "clean": "rm -rf dist .cache/cargo .cache/worker web/userscript/image-uploader.user.js",
+    "clean": "rm -rf dist .cache/cargo .cache/worker",
     "test:integration": "bun run build && node tests/integration.mjs",
     "test:frontend": "bun test tests/frontend.test.ts",
     "test:tooling": "node tests/tooling.test.mjs",

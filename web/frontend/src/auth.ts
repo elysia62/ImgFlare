@@ -136,13 +136,10 @@ export async function initLoginPage(): Promise<void> {
       if (error instanceof ApiError) {
         if (error.code === 'too_many_attempts') {
           showError('尝试次数过多，请 15 分钟后再试');
-        } else if (
-          error.code === 'turnstile_failed' ||
-          error.code === 'turnstile_missing'
-        ) {
-          showError(humanizeError(error.code));
-        } else {
+        } else if (error.code === 'unauthorized') {
           showError('用户名或密码不正确');
+        } else {
+          showError(humanizeError(error.code));
         }
       } else {
         showError('登录失败，请重试');

@@ -205,92 +205,29 @@ pub async fn verify_api_token(db: &Db, presented: &str) -> ApiResult<Principal> 
     Ok(Principal::Token { id: record.id })
 }
 
-/// Record `last_used_at`, but at most once per hour per token.
-///
-/// Without the throttle, every upload from the userscript would be an extra D1
-/// write. The timestamp is kept in the tiny `kv_meta` table.
-pub async fn touch_token_throttled(db: &Db, token_id: &str) -> ApiResult<()> {
-    const INTERVAL_MS: i64 = 60 * 60 * 1000; // one hour
-    let key = format!("token_touch:{token_id}");
-    let now = now_ms();
-
-    if let Some(last) = db.meta_get(&key).await?
-        && let Ok(last_ms) = last.parse::<i64>()
-        && now - last_ms < INTERVAL_MS
-    {
-        return Ok(());
-    }
-
-    db.touch_token(token_id).await?;
-    db.meta_set(&key, &now.to_string()).await?;
-    Ok(())
-}
-
 // Login throttling
 
-/// Failed attempts allowed per IP inside [`LOGIN_WINDOW_MS`].
+/// Attempts allowed per IP in a fixed window; success clears the counter.
 const LOGIN_MAX_ATTEMPTS: i64 = 8;
-/// Sliding window length.
 pub const LOGIN_WINDOW_MS: i64 = 15 * 60 * 1000;
 
-/// Counter key for an IP. Unattributable requests share one bucket.
 fn login_key(ip: Option<&str>) -> String {
     format!("login_fail:{}", ip.unwrap_or("unknown"))
 }
 
-/// Reject the attempt if this IP has already failed too many times.
+/// Reserve an attempt atomically before checking Turnstile or credentials.
 pub async fn check_login_allowed(db: &Db, ip: Option<&str>) -> ApiResult<()> {
-    let key = login_key(ip);
-    let Some(raw) = db.meta_get(&key).await? else {
-        return Ok(());
-    };
-
-    // Stored as `<count>:<first_failure_ms>`.
-    let Some((count, since)) = raw.split_once(':') else {
-        return Ok(());
-    };
-    let (Ok(count), Ok(since)) = (count.parse::<i64>(), since.parse::<i64>()) else {
-        return Ok(());
-    };
-
-    // Window elapsed — start over.
-    if now_ms() - since > LOGIN_WINDOW_MS {
-        db.meta_delete(&key).await?;
-        return Ok(());
-    }
-
-    if count >= LOGIN_MAX_ATTEMPTS {
+    if !db
+        .reserve_login_attempt(&login_key(ip), LOGIN_WINDOW_MS, LOGIN_MAX_ATTEMPTS)
+        .await?
+    {
         return Err(ApiError::TooManyRequests("too_many_attempts"));
     }
-
     Ok(())
 }
 
-/// Count one failed attempt, keeping the window's original start time.
-pub async fn record_login_failure(db: &Db, ip: Option<&str>) -> ApiResult<()> {
-    let key = login_key(ip);
-    let now = now_ms();
-
-    let (count, since) = match db.meta_get(&key).await? {
-        Some(raw) => match raw.split_once(':') {
-            Some((c, s)) => match (c.parse::<i64>(), s.parse::<i64>()) {
-                (Ok(c), Ok(s)) if now - s <= LOGIN_WINDOW_MS => (c, s),
-                _ => (0, now),
-            },
-            None => (0, now),
-        },
-        None => (0, now),
-    };
-
-    db.meta_set(&key, &format!("{}:{}", count + 1, since))
-        .await?;
-    Ok(())
-}
-
-/// Reset the counter after a successful login.
 pub async fn clear_login_failures(db: &Db, ip: Option<&str>) -> ApiResult<()> {
-    db.meta_delete(&login_key(ip)).await?;
-    Ok(())
+    db.meta_delete(&login_key(ip)).await
 }
 
 // CSRF

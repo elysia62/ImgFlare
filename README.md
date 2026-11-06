@@ -46,9 +46,9 @@ R2 使用 S3 API，不需要绑定。[init_01.sql](backend/migrations/init_01.sq
 
 `init_02.sql` 已经并入 `init_01.sql` 后删除。已部署的数据库记录着执行过的迁移名，重放同一文件名会被跳过，所以结构变更从 `init_03.sql` 起继续编号，不复用已执行过的文件名。
 
-已有部署升级：在 Cloudflare 的 Build variables 中将 `NODE_VERSION` 改为 `26.13.0`、`BUN_VERSION` 改为 `1.4.4`，保持 Deploy command 为 `bun run deploy`，重新部署即可。脚本会自动执行 `init_03.sql`，新增缩略图索引和备份任务锁，不需要重建数据库或重跑初始化。直接使用 `wrangler deploy` 时，需先运行 `bun run db:migrate:remote`。
+已有部署升级：在 Cloudflare 的 Build variables 中将 `NODE_VERSION` 改为 `26.13.0`、`BUN_VERSION` 改为 `1.4.4`，保持 Deploy command 为 `bun run deploy`，重新部署即可。脚本会自动执行 `init_03.sql` 和 `init_04.sql`，新增缩略图索引和备份任务锁，并清理冗余索引与旧 Token 时间戳记录，不需要重建数据库或重跑初始化。直接使用 `wrangler deploy` 时，需先运行 `bun run db:migrate:remote`。
 
-`SESSION_SECRET` 生成一次后保持不变；修改它会使已有登录失效。会话有效期为 7 天。
+`SESSION_SECRET` 生成一次后保持不变；修改它会使已有登录失效。会话有效期为 7 天。同一 IP 在 15 分钟内最多尝试登录 8 次，成功登录后重置计数；并发请求和人机验证失败也计入次数。
 
 部署后打开 `/login`。可在 Worker 的 **Domains & Routes** 中绑定自定义域名，并同步添加到 Turnstile 允许的域名中。
 
@@ -75,7 +75,7 @@ bun run dev
 | `bun run test:integration` | 构建并验证登录、上传、权限、备份恢复及 Cron |
 | `bun run dev:cron` | 启动本地服务并允许触发定时任务 |
 | `bun run deploy` | 先执行远程数据库迁移，再部署 Worker |
-| `bun run clean` | 清理构建产物与 Rust 编译缓存 |
+| `bun run clean` | 清理构建产物与 Rust 编译缓存，保留可安装脚本 |
 
 `bun run dev` 会监听 Rust、SQL、TypeScript、HTML、CSS 和共享模块，合并连续修改并依次重建；新增迁移自动应用到本地 D1。GitHub Actions 在 push 和 pull request 时运行 `bun run verify`。
 
@@ -90,7 +90,7 @@ const API_URL = 'https://你的图床域名';
 const API_TOKEN = 'cph_后台生成的Token';
 ```
 
-在 HTTPS 网页粘贴图片，上传后自动插入 `![粘贴图片](图片地址)` 并复制到剪贴板。最多同时上传 3 张，失败最多重试 2 次。拖拽上传请使用网站主页。
+在 HTTPS 网页粘贴图片，上传后自动插入 `![粘贴图片](图片地址)`，图片前后换行，每张图片独占一行；复制到剪贴板的内容同样包含前后换行。文本框中已有的换行会复用，光标移到图片后的新行，方便继续输入或粘贴下一张。单行输入框无法保留换行，因此只复制到剪贴板。最多同时上传 3 张，按粘贴顺序插入；上传失败最多重试 2 次。拖拽上传请使用网站主页。
 
 脚本不发送 Cookie，不依赖面板登录；不在图床自身页面或 iframe 中运行。错误显示在浏览器控制台。更新脚本前保存自己的配置。
 
@@ -175,7 +175,7 @@ backend/
 web/
   frontend/     管理面板页面、样式及 TypeScript
   userscript/   油猴源码、元数据及可安装脚本
-  shared/       两个客户端共用的图片处理函数和类型
+  shared/       两个客户端共用的图片处理、响应校验和类型
 scripts/        构建、部署及开发监听脚本
 tests/          前端、Rust、契约、工具及集成验证
 .github/        自动检查工作流

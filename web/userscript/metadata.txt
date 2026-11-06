@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         个人图床上传助手
 // @namespace    imgflare
-// @version      2.0.1
-// @description  在网页 Ctrl+V 粘贴图片，自动上传到自建图床并插入 Markdown。支持 SHA-256 去重、批量粘贴、失败重试。
+// @version      2.0.2
+// @description  在网页 Ctrl+V 粘贴图片，自动上传并插入前后换行的 Markdown，每张图片独占一行。支持 SHA-256 去重、批量按序插入、失败重试。
 // @author       you
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest

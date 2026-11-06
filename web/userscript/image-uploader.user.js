@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         个人图床上传助手
 // @namespace    imgflare
-// @version      2.0.1
-// @description  在网页 Ctrl+V 粘贴图片，自动上传到自建图床并插入 Markdown。支持 SHA-256 去重、批量粘贴、失败重试。
+// @version      2.0.2
+// @description  在网页 Ctrl+V 粘贴图片，自动上传并插入前后换行的 Markdown，每张图片独占一行。支持 SHA-256 去重、批量按序插入、失败重试。
 // @author       you
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
@@ -12,6 +12,10 @@
 
 "use strict";
 (() => {
+  var __defProp = Object.defineProperty;
+  var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
+  var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
+
   // web/shared/thumbnail.ts
   var MAX_SIDE = 384;
   async function makeThumbnail(source) {
@@ -54,6 +58,48 @@
     return new File([file], `pasted-${stamp}.${ext}`, { type: file.type });
   }
 
+  // web/shared/api.ts
+  var ApiError = class extends Error {
+    constructor(code, status) {
+      super(code);
+      __publicField(this, "code");
+      __publicField(this, "status");
+      this.name = "ApiError";
+      this.code = code;
+      this.status = status;
+    }
+  };
+  function isObject(value) {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+  }
+  function isFile(value) {
+    return isObject(value) && ["id", "sha256", "name", "contentType", "url", "markdown"].every((key) => typeof value[key] === "string") && typeof value.size === "number" && typeof value.createdAt === "number" && (value.thumbnailUrl === null || typeof value.thumbnailUrl === "string");
+  }
+  function parseUploadResult(value, status) {
+    if (!isObject(value)) throw new ApiError("invalid_response", status);
+    if (status < 200 || status >= 300 || value.success === false) {
+      throw new ApiError(typeof value.error === "string" ? value.error : "upload_failed", status);
+    }
+    if (value.success !== true || typeof value.deduplicated !== "boolean" || !isFile(value.file)) {
+      throw new ApiError("invalid_response", status);
+    }
+    return { success: true, deduplicated: value.deduplicated, file: value.file };
+  }
+  function parseResponse(payload, status) {
+    if (!isObject(payload)) throw new ApiError("invalid_response", status);
+    if (status < 200 || status >= 300 || payload.success === false) {
+      throw new ApiError(typeof payload.error === "string" ? payload.error : "http_error", status);
+    }
+    if (payload.success !== true) throw new ApiError("invalid_response", status);
+    return "data" in payload ? payload.data : payload;
+  }
+  function parseDuplicateResult(value) {
+    if (!isObject(value) || value.success !== true || typeof value.exists !== "boolean" || (value.file == null ? value.exists : !isFile(value.file))) {
+      throw new ApiError("invalid_response", 200);
+    }
+    return value;
+  }
+
   // web/userscript/image-uploader.user.ts
   var API_URL = "https://img.example.com";
   var API_TOKEN = "cph_\u5728\u8FD9\u91CC\u586B\u5165\u4F60\u7684Token";
@@ -81,17 +127,12 @@
         anonymous: true,
         timeout: 12e4,
         onload: (response) => {
-          let payload = null;
           try {
-            payload = JSON.parse(response.responseText);
-          } catch {
-            payload = null;
+            const payload = JSON.parse(response.responseText);
+            resolve(parseResponse(payload, response.status));
+          } catch (error) {
+            reject(error instanceof ApiError ? error : new ApiError("invalid_response", response.status));
           }
-          if (response.status >= 200 && response.status < 300 && payload?.success !== false) {
-            resolve(payload?.data ?? payload);
-            return;
-          }
-          reject(new Error(payload?.error ?? `http_${response.status}`));
         },
         onerror: () => reject(new Error("network_error")),
         ontimeout: () => reject(new Error("timeout"))
@@ -116,43 +157,41 @@
   }
   async function uploadOne(file) {
     const sha256 = await sha256Hex(file);
-    const check = await request("/api/upload/check", {
+    const check = parseDuplicateResult(await request("/api/upload/check", {
       method: "POST",
       body: { sha256 }
-    });
+    }));
     if (check.exists && check.file) return check.file.url;
+    const thumbnail = await makeThumbnail(file);
     let lastError = null;
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
       if (attempt > 0) await delay(400 * attempt);
       try {
         const form = new FormData();
         form.append("file", file, file.name);
-        const thumbnail = await makeThumbnail(file);
         if (thumbnail) form.append("thumbnail", thumbnail, thumbnail.name);
-        const result = await request("/api/upload", {
+        const result = parseUploadResult(await request("/api/upload", {
           method: "POST",
           formData: form,
           headers: { "X-File-SHA256": sha256 }
-        });
+        }), 200);
         return result.file.url;
       } catch (error) {
         lastError = error;
-        const message = error instanceof Error ? error.message : "upload_failed";
-        if (/^(unauthorized|invalid_sha256|checksum_mismatch|file_too_large|unsupported_file_type|missing_file|expected_multipart)/.test(
-          message
-        )) {
-          break;
-        }
+        if (error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429) break;
       }
     }
     throw lastError instanceof Error ? lastError : new Error("upload_failed");
   }
   var pending = [];
+  var insertionOrder = [];
   var running = 0;
   function enqueue(files, target = null) {
     for (const file of files) {
       if (file.size === 0) continue;
-      pending.push({ file, target });
+      const item = { file, target, done: false };
+      pending.push(item);
+      insertionOrder.push(item);
     }
     pump();
   }
@@ -162,14 +201,27 @@
       if (!item) break;
       running += 1;
       void uploadOne(item.file).then((url) => {
-        insertMarkdown(`![\u7C98\u8D34\u56FE\u7247](${url})`, item.target);
+        item.url = url;
       }).catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
         console.error(`[imgflare] ${item.file.name} \u4E0A\u4F20\u5931\u8D25\uFF1A${message}`);
       }).finally(() => {
         running -= 1;
+        item.done = true;
+        flushInsertions();
         pump();
       });
+    }
+  }
+  function flushInsertions() {
+    while (insertionOrder[0]?.done) {
+      const item = insertionOrder.shift();
+      if (!item.url) continue;
+      try {
+        insertMarkdown(`![\u7C98\u8D34\u56FE\u7247](${item.url})`, item.target);
+      } catch (error) {
+        console.error("[imgflare] \u63D2\u5165\u5931\u8D25\uFF1A", error);
+      }
     }
   }
   function findEditor() {
@@ -193,23 +245,27 @@
   }
   function insertMarkdown(markdown, target) {
     const editor = target ?? findEditor();
-    if (editor instanceof HTMLTextAreaElement || editor instanceof HTMLInputElement) {
+    const block = `
+${markdown}
+`;
+    if (editor instanceof HTMLTextAreaElement) {
       const start = editor.selectionStart ?? editor.value.length;
       const end = editor.selectionEnd ?? start;
       const before = editor.value.slice(0, start);
       const after = editor.value.slice(end);
-      const prefix = before.length > 0 && !/\s$/.test(before) ? " " : "";
-      const suffix = after.length > 0 && !/^\s/.test(after) ? " " : "";
+      const prefix = before.endsWith("\n") ? "" : "\n";
+      const followingBreak = after.match(/^\r?\n/)?.[0] ?? "";
+      const suffix = followingBreak ? "" : "\n";
       const inserted = `${prefix}${markdown}${suffix}`;
       editor.value = before + inserted + after;
-      const caret = start + inserted.length;
+      const caret = start + inserted.length + followingBreak.length;
       editor.setSelectionRange(caret, caret);
       editor.dispatchEvent(new Event("input", { bubbles: true }));
     } else if (editor && editor.isContentEditable) {
       editor.focus();
-      document.execCommand("insertText", false, markdown);
+      document.execCommand("insertText", false, block);
     }
-    void copyToClipboard(markdown);
+    void copyToClipboard(block);
   }
   async function copyToClipboard(text) {
     try {

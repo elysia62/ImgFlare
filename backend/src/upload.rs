@@ -220,10 +220,10 @@ pub async fn handle_upload(
             if let Err(error) = crate::cleanup::key(db, &r2, &record.r2_key).await {
                 worker::console_error!("upload cleanup deferred: {error}");
             }
-            if let Some(key) = &record.thumbnail_r2_key {
-                if let Err(error) = crate::cleanup::key(db, &r2, key).await {
-                    worker::console_error!("thumbnail cleanup deferred: {error}");
-                }
+            if let Some(key) = &record.thumbnail_r2_key
+                && let Err(error) = crate::cleanup::key(db, &r2, key).await
+            {
+                worker::console_error!("thumbnail cleanup deferred: {error}");
             }
             match db.find_file_by_sha256(&declared).await? {
                 Some(existing) => Ok(UploadOutcome {
@@ -316,10 +316,10 @@ pub async fn handle_thumbnail(
         .find_file_by_id(id)
         .await?
         .ok_or(ApiError::NotFound("file_not_found"))?;
-    if result.thumbnail_r2_key.as_deref() != Some(&key) {
-        if let Err(error) = crate::cleanup::key(db, r2, &key).await {
-            worker::console_error!("thumbnail cleanup deferred: {error}");
-        }
+    if result.thumbnail_r2_key.as_deref() != Some(&key)
+        && let Err(error) = crate::cleanup::key(db, r2, &key).await
+    {
+        worker::console_error!("thumbnail cleanup deferred: {error}");
     }
     Ok(FileInfo::from_record(&result, origin))
 }

@@ -11,9 +11,6 @@ CREATE TABLE IF NOT EXISTS files (
     thumbnail_r2_key TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_files_created_at
-    ON files(created_at DESC);
-
 CREATE TABLE IF NOT EXISTS api_tokens (
     id           TEXT PRIMARY KEY,
     name         TEXT NOT NULL,
@@ -62,3 +59,4 @@ CREATE TABLE IF NOT EXISTS d1_migrations (
 );
 INSERT OR IGNORE INTO d1_migrations(name) VALUES ('init_01.sql');
 INSERT OR IGNORE INTO d1_migrations(name) VALUES ('init_03.sql');
+INSERT OR IGNORE INTO d1_migrations(name) VALUES ('init_04.sql');
