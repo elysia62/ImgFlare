@@ -384,7 +384,7 @@ fn sniff_isobmff(bytes: &[u8]) -> Option<&'static str> {
 
 fn is_svg(bytes: &[u8]) -> bool {
     let head = &bytes[..bytes.len().min(1024)];
-    let head = head.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(head);
+    let head = head.trim_prefix(b"\xEF\xBB\xBF");
     let Ok(text) = std::str::from_utf8(head) else {
         return false;
     };
@@ -412,6 +412,10 @@ mod image_tests {
     fn accepts_svg_jxl_and_other_images() {
         assert_eq!(
             image_content_type("a.svg", b"<svg xmlns='http://www.w3.org/2000/svg'></svg>"),
+            Some("image/svg+xml")
+        );
+        assert_eq!(
+            image_content_type("bom.svg", b"\xEF\xBB\xBF<svg/>"),
             Some("image/svg+xml")
         );
         assert_eq!(

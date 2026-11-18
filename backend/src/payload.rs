@@ -1,8 +1,9 @@
 //! Keep multipart files in the runtime, outside Wasm linear memory.
 use crate::error::{ApiError, ApiResult};
 use worker::{
+    crypto::{DigestStream, DigestStreamAlgorithm},
     js_sys,
-    wasm_bindgen::{JsCast, JsValue},
+    wasm_bindgen::JsCast,
     wasm_bindgen_futures::JsFuture,
     web_sys,
 };
@@ -33,21 +34,12 @@ pub async fn prefix(file: &web_sys::File) -> ApiResult<Vec<u8>> {
 }
 
 pub async fn digest(file: &web_sys::File) -> ApiResult<[u8; 32]> {
-    // Cloudflare DigestStream hashes incrementally without retaining the file.
-    let crypto = js_sys::Reflect::get(&js_sys::global(), &JsValue::from_str("crypto"))?;
-    let constructor: js_sys::Function =
-        js_sys::Reflect::get(&crypto, &JsValue::from_str("DigestStream"))?.dyn_into()?;
-    let stream = js_sys::Reflect::construct(
-        &constructor,
-        &js_sys::Array::of1(&JsValue::from_str("SHA-256")),
-    )?;
-    let writable: web_sys::WritableStream = stream.clone().unchecked_into();
-    JsFuture::from(file.stream().pipe_to(&writable)).await?;
-    let promise: js_sys::Promise =
-        js_sys::Reflect::get(&stream, &JsValue::from_str("digest"))?.dyn_into()?;
-    let hash = JsFuture::from(promise).await?;
-    let bytes = js_sys::Uint8Array::new(&hash).to_vec();
-    bytes
+    let stream = DigestStream::new(DigestStreamAlgorithm::Sha256);
+    JsFuture::from(file.stream().pipe_to(stream.raw())).await?;
+    stream
+        .digest()
+        .await?
+        .to_vec()
         .try_into()
         .map_err(|_| ApiError::Internal("invalid SHA-256 digest".into()))
 }

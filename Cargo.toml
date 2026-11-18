@@ -10,7 +10,7 @@ path = "backend/src/lib.rs"
 crate-type = ["cdylib"]
 
 [dependencies]
-worker = { version = "0.8.7", features = ["d1"] }
+worker = { version = "0.9.0", features = ["d1"] }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

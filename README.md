@@ -54,7 +54,7 @@ R2 使用 S3 API，不需要绑定。[init_01.sql](backend/migrations/init_01.sq
 
 ## 本地开发
 
-需要 Bun 1.4.4、Node.js 26 LTS（26.13.0 起）和 Rust（含 `wasm32-unknown-unknown`）。`.node-version` 与 CI 统一 Node 版本；构建脚本会下载与 Cargo.lock 一致的 wasm-bindgen。
+需要 Bun 1.4.4、Node.js 26 LTS（26.13.0 起，见 `.node-version`）和 Rust stable（含 `wasm32-unknown-unknown` 目标）。构建脚本按 `Cargo.lock` 选择 wasm-bindgen 版本。
 
 ```sh
 bun install --frozen-lockfile

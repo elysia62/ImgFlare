@@ -125,7 +125,7 @@ function runWasmBindgen(bin) {
   const wasm = `${targetDir}/wasm32-unknown-unknown/release/imgflare.wasm`;
   if (!existsSync(wasm)) fail(`expected ${wasm} to exist after cargo build`);
 
-  run(bin, ["--target", "bundler", "--no-typescript", "--out-name", "index", "--out-dir", STAGING, wasm]);
+  run(bin, ["--target", "web", "--no-typescript", "--out-name", "index", "--out-dir", STAGING, wasm]);
 }
 
 function writeShim() {

@@ -1,17 +1,16 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import wasmModule from "./index_bg.wasm";
-import * as bindings from "./index_bg.js";
+import { initSync, fetch as workerFetch, scheduled as workerScheduled } from "./index.js";
 import { fetchWithLimit } from "./request-limits.mjs";
 
-const instance = new WebAssembly.Instance(wasmModule, { "./index_bg.js": bindings });
-bindings.__wbg_set_wasm(instance.exports);
-instance.exports.__wbindgen_start();
+// Workers supplies a compiled module. Let wasm-bindgen wire all SDK imports.
+initSync({ module: wasmModule });
 
 export default class Entrypoint extends WorkerEntrypoint {
   fetch(request) {
-    return fetchWithLimit(request, (request) => bindings.fetch(request, this.env, this.ctx));
+    return fetchWithLimit(request, (request) => workerFetch(request, this.env, this.ctx));
   }
   scheduled(event) {
-    return bindings.scheduled(event, this.env, this.ctx);
+    return workerScheduled(event, this.env, this.ctx);
   }
 }
